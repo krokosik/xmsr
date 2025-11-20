@@ -436,7 +436,7 @@ class _MeasurementGUI(QWidget):
 
     def _finish_progress_bar(self):
         self.LOG.info(
-            f"Measurement finished! Open with\n\nxr.open_dataarray('{self.measurement_thread._path}', engine='zarr')\n"
+            f"Measurement finished! Open with\n\nxr.open_{'dataarray' if len(self.measurement_thread.variables) == 1 else 'dataset'}('{self.measurement_thread._path}', engine='zarr')\n"
         )
 
     def _refresh_param_options(self, _index: int = 0):
@@ -458,7 +458,7 @@ class _MeasurementGUI(QWidget):
     def _current_indices(self) -> tuple[int, ...]:
         return tuple((param_box.currentIndex() for param_box in self._param_boxes))
 
-    def _redraw_preview(self, data: Optional[xr.DataArray] = None):
+    def _redraw_preview(self, data: Optional[xr.DataArray | xr.Dataset] = None):
         self.LOG.debug(f"Redrawing preview for measurement no. {self._current_indices}")
         if not self._with_preview:
             return
@@ -477,7 +477,7 @@ class _MeasurementGUI(QWidget):
             self.mw.getFigure().clear()
             self.measurement_thread.plot_preview(
                 data,
-                xr.open_dataarray(self.measurement_thread.filename, engine="zarr"),
+                self.measurement_thread.result,
                 self.mw.getFigure().subplots(),
             )
             self.mw.draw()

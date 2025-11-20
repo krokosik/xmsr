@@ -1854,6 +1854,7 @@ source = { editable = "." }
 dependencies = [
     { name = "matplotlib" },
     { name = "numpy" },
+    { name = "tqdm" },
     { name = "xarray" },
     { name = "zarr" },
 ]
@@ -1879,6 +1880,7 @@ notebook = [
 requires-dist = [
     { name = "matplotlib", specifier = ">=3.10.6" },
     { name = "numpy", specifier = ">1.25" },
+    { name = "tqdm", specifier = ">=4.67.1" },
     { name = "xarray", specifier = "<2025.5.0" },
     { name = "zarr", specifier = "<3" },
 ]
