@@ -27,13 +27,12 @@ and their respective values.
 Calling `run` calls the `measure` method for all combinations of parameters in blocking mode.
 The `result` attribute fetches the xarray DataArray with the measured data.
 """
+
 # %%
 from typing import Any
-import numpy.typing as npt
 from xmsr import Measurement, VariableData
 from time import sleep
 import numpy as np
-import xarray as xr
 
 
 class BasicMeasurement(Measurement):
@@ -95,8 +94,11 @@ for example `measure` methods.
 
 
 class ConfiguredMeasurement(BasicMeasurement):
-    data_dims = ["z", "t"]
-    data_coords = dict(z=list(range(10)), t=list(range(10)))
+    variables = [
+        VariableData("my-variable", ["z", "t"], {"t": range(10), "z": range(10)})
+    ]
+    # data_dims = ["z", "t"]
+    # data_coords = dict(z=list(range(10)), t=list(range(10)))
     metadata = dict(measurement="test")
     timestamp = False
     with_coords = False
@@ -145,13 +147,14 @@ from the `measure` method and define the `variables` attribute as a list of `Var
 instances.
 """
 
+
 class MultiMeasurement(Measurement):
     target_directory = "tmp"
     param_coords = dict(
         x=list(range(5)), y=[(12, 13), (14, 15)]
     )  # param coordinates can be 2D
     variables = [
-        VariableData("var1"), # coordinates are optional
+        VariableData("var1"),  # coordinates are optional
         VariableData("var2", ["c"], {"c": range(10)}),
         VariableData("var3", [], {}),
     ]
@@ -159,6 +162,7 @@ class MultiMeasurement(Measurement):
     def measure(self, values, indices, metadata):
         sleep(0.1)
         return np.random.randint(10, size=(10, 10)), np.random.randn(10), np.array(0)
+
 
 multi_measurement = MultiMeasurement()
 multi_measurement.run()
@@ -175,30 +179,35 @@ The GUI also let's you go back in time and resume measurements from existing arc
 
 
 # %%
+time_coords = np.pi * np.linspace(-1, 1, 100)
+
+
 class MeasurementWithPreview(Measurement):
     target_directory = "tmp"
     param_coords = {
         "amplitude": range(5, 10),
         "frequency": [1, 1 / 3, 1 / 2],
-        "signal/noise": ["signal", "noise"],
+        # "signal/noise": ["signal", "noise"],
     }
-    data_dims = ["time"]
-    data_coords = {
-        "time": (np.pi * np.linspace(-1, 1, 100)),
-    }
+    variables = [
+        VariableData("signal", ["time"], {"time": time_coords}),
+        VariableData("noise", ["time"], {"time": time_coords}),
+    ]
+    # data_dims = ["time"]
+    # data_coords = {
+    #     "time": (np.pi * np.linspace(-1, 1, 100)),
+    # }
     with_coords = False
 
-    def measure(
-        self, values: dict[str, Any], indices: dict[str, int], metadata: dict[str, Any]
-    ) -> npt.NDArray:
+    def measure(self, values, indices, metadata):
         sleep(0.1)
         t = self.data_coords["time"]
-        result = np.random.randn(len(t))
-        if values["signal/noise"] == "signal":
-            # self.LOG.info("Measuring signal")
-            result += values["amplitude"] * np.sin(values["frequency"] * t)
+        signal = np.random.randn(len(t)) + values["amplitude"] * np.sin(
+            values["frequency"] * t
+        )
+        noise = np.random.randn(len(t))
 
-        return result
+        return signal, noise
 
     def plot_preview(self, chunk_da, full_da, ax):
         chunk_da.plot.line(x="time", ax=ax, ylim=(-10, 10))
