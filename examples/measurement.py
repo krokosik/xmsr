@@ -30,7 +30,7 @@ The `result` attribute fetches the xarray DataArray with the measured data.
 # %%
 from typing import Any
 import numpy.typing as npt
-from spin1.utils.measurement import Measurement, VariableData
+from xmsr import Measurement, VariableData
 from time import sleep
 import numpy as np
 import xarray as xr
@@ -42,7 +42,7 @@ class BasicMeasurement(Measurement):
         x=list(range(5)), y=[(12, 13), (14, 15)]
     )  # param coordinates can be 2D
 
-    def measure(self, indices, values, metadata):
+    def measure(self, values, indices, metadata):
         sleep(0.1)
         return np.random.randint(10, size=(10, 10))
 
@@ -106,9 +106,9 @@ class ConfiguredMeasurement(BasicMeasurement):
     def prepare(self, metadata: dict[str, Any]):
         self.metadata.update({"prepared": True})
 
-    def measure(self, indices, values, metadata):
+    def measure(self, values, indices, metadata):
         metadata.update({"measured": True})
-        return super().measure(indices, values, metadata)
+        return super().measure(values, indices, metadata)
 
     def finish(self, metadata: dict[str, Any]):
         self.metadata.update({"finished": True})
@@ -156,7 +156,7 @@ class MultiMeasurement(Measurement):
         VariableData("var3", [], {}),
     ]
 
-    def measure(self, indices, values, metadata):
+    def measure(self, values, indices, metadata):
         sleep(0.1)
         return np.random.randint(10, size=(10, 10)), np.random.randn(10), np.array(0)
 
@@ -200,8 +200,8 @@ class MeasurementWithPreview(Measurement):
 
         return result
 
-    def plot_preview(self, data: xr.DataArray, full_data, ax):
-        data.plot(x="time", ax=ax, ylim=(-10, 10))
+    def plot_preview(self, chunk_da, full_da, ax):
+        chunk_da.plot.line(x="time", ax=ax, ylim=(-10, 10))
 
 
 MeasurementWithPreview.gui
