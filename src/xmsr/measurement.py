@@ -47,7 +47,7 @@ class ProgressDict(TypedDict):
     indices: tuple[int, ...]
 
 
-class _Measurement(Thread):
+class Measurement(Thread):
     """Abstract base class for measurements performing a parametric scan.
 
     In order to implement a measurement, subclass this class and implement the
@@ -485,23 +485,6 @@ class _Measurement(Thread):
     def __del__(self):
         if hasattr(self, "pbar") and self.pbar is not None:
             self.pbar.close()
-
-    def run_widget(self):
-        from IPython.display import display
-        from ipywidgets import Button
-
-        run_btn = Button(
-            description=f"Run {self.__class__.__name__}",
-            layout={"width": "200px"},
-        )
-
-        display(run_btn)
-
-        def run_measurement():
-            self.run()
-            self.plot_result()
-
-        run_btn.on_click(lambda _: run_measurement())
 
     def plot_result(self, *args, **kwargs):
         try:
