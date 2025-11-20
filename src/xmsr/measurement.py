@@ -1,20 +1,22 @@
 import itertools
 import json
 import logging
-from pathlib import Path
 import os
 import shutil
 import sys
+import time
 from collections.abc import Collection, Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Optional, Union
+from pathlib import Path
+from queue import Queue
+from threading import Event, Thread
+from typing import Any, Optional, TypedDict, Union
 
 import numpy as np
 import numpy.typing as npt
 import xarray as xr
 import zarr
-from PyQt5.QtCore import QThread, pyqtSignal
 from tqdm import tqdm
 from tqdm.contrib.logging import tqdm_logging_redirect
 
@@ -30,7 +32,22 @@ class VariableData:
     coords: Mapping[str, Any] = field(default_factory=dict)
 
 
-class _Measurement(QThread):
+class ProgressDict(TypedDict):
+    n: int
+    total: int
+    percentage: float
+    elapsed: float
+    remaining: float
+    rate: float
+    unit: str
+    unit_scale: bool
+    unit_divisor: int
+    ncols: Optional[int]
+    nrows: Optional[int]
+    indices: tuple[int, ...]
+
+
+class _Measurement(Thread):
     """Abstract base class for measurements performing a parametric scan.
 
     In order to implement a measurement, subclass this class and implement the
@@ -74,32 +91,20 @@ class _Measurement(QThread):
         overwrite: Whether existing values should be overwritten.
     """
 
-    start_signal = pyqtSignal(dict)
-    step_signal = pyqtSignal(dict)
-    finished_signal = pyqtSignal()
-    new_result_signal = pyqtSignal(xr.Dataset)
+    running = Event()
+    progress_queue = Queue[ProgressDict]()
+    revert_progress = Queue[tuple[int, ...]]()
+    chunk_queue = Queue[xr.DataArray | xr.Dataset]()
+    finished = Event()
 
     _is_single_run = True
-
-    _paused = False
-    _should_stop = False
-
-    stop = pyqtSignal()
-    toggle_pause = pyqtSignal()
-    revert_progress = pyqtSignal(tuple)
-
-    def _toggle_pause(self):
-        self._paused = not self._paused
-
-    def _set_should_stop(self):
-        self._should_stop = True
 
     def _revert_progress(self, indices: Union[tuple[int, ...], int]):
         previous_index = getattr(self, "_current_index", 0)
         self.current_index = indices
         self.pbar.unpause()
         self.pbar.update(self.current_index - previous_index)
-        self.step_signal.emit(self._get_progress_dict())
+        self.progress_queue.put_nowait(self._get_progress_dict())
 
     param_coords: dict[str, Any]
 
@@ -142,10 +147,6 @@ class _Measurement(QThread):
             target_directory if target_directory is not None else self.target_directory
         )
 
-        self.toggle_pause.connect(self._toggle_pause)
-        self.stop.connect(self._set_should_stop)
-        self.revert_progress.connect(self._revert_progress)
-
         self.LOG = logging.getLogger(self.__class__.__name__)
         self.LOG.setLevel(logging.INFO)
 
@@ -174,7 +175,7 @@ class _Measurement(QThread):
                     break
 
         if hasattr(self, "pbar"):
-            self.step_signal.emit(self._get_progress_dict())
+            self.progress_queue.put_nowait(self._get_progress_dict())
 
     def get_index_by_indices(self, indices: tuple[int, ...]) -> int:
         for i, (combination_indices, _) in enumerate(self._combinations):
@@ -301,27 +302,23 @@ class _Measurement(QThread):
 
             self.LOG.info("Starting measurements...")
 
+            self.running.set()
+            self.finished.clear()
+
             with tqdm_logging_redirect(
                 tqdm_class=tqdm,
                 total=len(self._combinations),
                 initial=self.current_index,
                 unit="measurement",
             ) as self.pbar:
-                self.start_signal.emit(self._get_progress_dict())
+                self.progress_queue.put_nowait(self._get_progress_dict())
 
-                while not self._should_stop:
-                    while self._paused or self.current_index >= len(self._combinations):
-                        if self._should_stop or (
-                            self._is_single_run
-                            and self.current_index >= len(self._combinations)
-                        ):
-                            break
-                        self.msleep(1)
+                while not self.finished.is_set():
+                    self.running.wait()
+                    if self._is_single_run and self.current_index >= len(self._combinations):
+                        self.finished.set()
 
-                    if self._should_stop or (
-                        self._is_single_run
-                        and self.current_index >= len(self._combinations)
-                    ):
+                    if self.finished.is_set():
                         break
 
                     indices, values = self._combinations[self.current_index]
@@ -349,26 +346,27 @@ class _Measurement(QThread):
 
                     self.current_index += 1
 
-                    if self.current_index == len(self._combinations):
-                        self.finished_signal.emit()
+                    if self.current_index >= len(self._combinations):
+                        self.finished.set()
 
-                        self.finish(self.metadata)
+                    time.sleep(0)  # process events in blocking version
 
-                        self._update_metadata()
-
-                    self.msleep(0)  # process events in blocking version
+                if self.finished.is_set():
+                    self.running.clear()
+                    self.finish(self.metadata)
+                    self._update_metadata()
 
         except Exception as e:
             self.LOG.exception(e)
             raise e
 
-    def _get_progress_dict(self) -> dict:
+    def _get_progress_dict(self) -> ProgressDict:
         return {
             **self.pbar.format_dict,
             "indices": self._combinations[
                 min(self.current_index, len(self._combinations) - 1)
             ][0],
-        }
+        } # type: ignore
 
     def _store_ndarray(
         self, indices: tuple[int, ...], data: tuple[np.ndarray, ...]
@@ -428,7 +426,7 @@ class _Measurement(QThread):
             },
         )
 
-        self.new_result_signal.emit(ds)
+        self.chunk_queue.put(ds)
 
         self._update_metadata()
 
@@ -512,16 +510,6 @@ class _Measurement(QThread):
             self.LOG.error(
                 "Default plot_result method failed, please provide a custom plot function"
             )
-
-    @classmethod
-    @property
-    def gui(cls):
-        """Start the measurement GUI.
-
-        Warning! This is a class method, as GUI creates its own objects. If called
-        from an object, all of its parameters will be ignored.
-        """
-        raise NotImplementedError
 
     def plot_preview(
         self,

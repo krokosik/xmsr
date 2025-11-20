@@ -61,14 +61,14 @@ or abort it, as well as when you want to have the IPython console available duri
 measurement2 = BasicMeasurement()
 measurement2.start()
 print("Measurement is running in a separate thread!")
-sleep(1)
-measurement2.toggle_pause.emit()
+sleep(0.2)
+measurement2.running.clear()
 print("Measurement is paused!")
-sleep(1)
+sleep(5)
 print("Resuming measurement...")
 sleep(0.1)
-measurement2.toggle_pause.emit()
-measurement2.wait()
+measurement2.running.set()
+measurement2.finished.wait()
 measurement2.result
 # %% [markdown]
 """
@@ -130,14 +130,14 @@ is no timestamp so the filename stays the same.
 # %%
 measurement4 = ConfiguredMeasurement()
 measurement4.start()
-sleep(1)
-measurement4.stop.emit()
-measurement4.wait()
+sleep(0.5)
+measurement4.finished.set()
 print("Measurement stopped!")
+sleep(1)
 print("Creating new measurement...")
 measurement4 = ConfiguredMeasurement(overwrite=False)
 measurement4.start()
-measurement4.wait()
+measurement4.finished.wait()
 measurement4.result
 
 # %% [markdown]
@@ -212,8 +212,6 @@ class MeasurementWithPreview(Measurement):
     def plot_preview(self, chunk_da, full_da, ax):
         chunk_da.plot.line(x="time", ax=ax, ylim=(-10, 10))
 
-
-MeasurementWithPreview.gui
 
 # %% [markdown]
 """
