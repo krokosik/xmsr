@@ -1,7 +1,8 @@
 import itertools
 import json
 import logging
-import os.path
+from pathlib import Path
+import os
 import shutil
 import sys
 from collections.abc import Collection, Iterable, Mapping
@@ -112,7 +113,7 @@ class _Measurement(QThread):
     _combinations: list[tuple[tuple[int, ...], tuple[Any, ...]]]
     _last_measurement_shapes: Optional[tuple[tuple[int, ...], ...]]
     _current_index: int
-    _path: str
+    _path: Path
     LOG: logging.Logger
 
     metadata: dict[str, Any] = {}
@@ -279,12 +280,12 @@ class _Measurement(QThread):
                 self.timestamp, self.with_coords
             )
 
-            self._path = os.path.join(self.target_directory, filename)
+            self._path = (Path(self.target_directory) / filename).with_suffix(".zarr")
             self.LOG.info(f"Results will be stored in:\n{filename}")
             self.LOG.info(f"Full path:\n{os.path.abspath(self._path)}")
 
             try:
-                self.current_index = zarr.open(self._path, mode="r").attrs[
+                self.current_index = zarr.open(str(self._path), mode="r").attrs[
                     _CURRENT_INDEX_KEY
                 ]
                 self.LOG.info(
@@ -343,7 +344,7 @@ class _Measurement(QThread):
                             for r, ls in zip(result, self._last_measurement_shapes)
                         ), "All measurements must have the same shape"
 
-                    self._store_ndarray(self._path, indices, result)
+                    self._store_ndarray(indices, result)
                     self.pbar.update(1)
 
                     self.current_index += 1
@@ -370,7 +371,7 @@ class _Measurement(QThread):
         }
 
     def _store_ndarray(
-        self, path: str, indices: tuple[int, ...], data: tuple[np.ndarray, ...]
+        self, indices: tuple[int, ...], data: tuple[np.ndarray, ...]
     ) -> None:
         assert len(data) == len(
             self.variables
@@ -380,7 +381,7 @@ class _Measurement(QThread):
             if len(var.dims) != datum.ndim:
                 var.dims = self._default_data_dims(datum)
 
-        if not os.path.exists(path):
+        if not self._path.exists():
             ds = xr.Dataset(
                 {
                     var.name: xr.DataArray(
@@ -402,7 +403,7 @@ class _Measurement(QThread):
             )
             (
                 ds if len(self.variables) > 1 else ds[self.variables[0].name]
-            ).assign_attrs(**self.metadata).to_zarr(path, mode="w")
+            ).assign_attrs(**self.metadata).to_zarr(self._path, mode="w")
 
         ds = xr.Dataset(
             {
@@ -420,7 +421,7 @@ class _Measurement(QThread):
         ).drop_vars(
             sum([list(var.coords.keys()) for var in self.variables], [])
         ).to_zarr(
-            path,
+            self._path,
             region={
                 dim: slice(index, index + 1)
                 for dim, index in zip(self._param_coords.keys(), indices)
@@ -433,7 +434,7 @@ class _Measurement(QThread):
 
         # Zarr attributes are for some reason separate from xarray attributes
         # so we hide the data not used in the result
-        zarr.open(path, mode="a").attrs[_CURRENT_INDEX_KEY] = self.current_index + 1
+        zarr.open(str(self._path), mode="a").attrs[_CURRENT_INDEX_KEY] = self.current_index + 1
 
     def _default_data_dims(self, data: np.ndarray) -> tuple[str, ...]:
         return tuple((f"dim{i}" for i in range(data.ndim)))
@@ -446,11 +447,11 @@ class _Measurement(QThread):
         z = z[self.variables[0].name]
         z.attrs.update(self.metadata)
 
-        with open(self._path + "/.zmetadata", "r") as f:
+        with open(self._path / ".zmetadata", "r") as f:
             data = json.load(f)
             data["metadata"][self.variables[0].name + "/.zattrs"].update(self.metadata)
 
-        with open(self._path + "/.zmetadata", "w") as f:
+        with open(self._path / ".zmetadata", "w") as f:
             json.dump(data, f)
 
     @property
