@@ -31,7 +31,6 @@ import os
 from tqdm import tqdm
 from pyqtgraph.widgets.MatplotlibWidget import MatplotlibWidget
 from typing import Optional
-from spin1.pygraphs.qtdbg import gui_qt5
 
 
 class QtLoggingHelper(ABC):
