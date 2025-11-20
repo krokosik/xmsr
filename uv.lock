@@ -1891,8 +1891,6 @@ name = "xmsr"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
-    { name = "holoviews" },
-    { name = "ipywidgets" },
     { name = "matplotlib" },
     { name = "numpy" },
     { name = "tqdm" },
@@ -1903,24 +1901,24 @@ dependencies = [
 [package.dev-dependencies]
 dev = [
     { name = "ipykernel" },
-    { name = "pyqt5-stubs" },
     { name = "ruff" },
 ]
-gui = [
+notebook = [
+    { name = "holoviews" },
+    { name = "hvplot" },
+    { name = "ipywidgets" },
+]
+qt = [
     { name = "coloredlogs" },
     { name = "pyqt5" },
+    { name = "pyqt5-stubs" },
     { name = "pyqt6" },
     { name = "pyqtgraph" },
     { name = "qtpy" },
 ]
-notebook = [
-    { name = "hvplot" },
-]
 
 [package.metadata]
 requires-dist = [
-    { name = "holoviews", specifier = ">=1.21.0" },
-    { name = "ipywidgets", specifier = ">=8.1.8" },
     { name = "matplotlib", specifier = ">=3.10.6" },
     { name = "numpy", specifier = ">1.25" },
     { name = "tqdm", specifier = ">=4.67.1" },
@@ -1931,17 +1929,21 @@ requires-dist = [
 [package.metadata.requires-dev]
 dev = [
     { name = "ipykernel", specifier = ">=6.30.1" },
-    { name = "pyqt5-stubs", specifier = ">=5.15.6.0" },
     { name = "ruff", specifier = ">=0.13.3" },
 ]
-gui = [
+notebook = [
+    { name = "holoviews", specifier = ">=1.21.0" },
+    { name = "hvplot", specifier = ">=0.12.1" },
+    { name = "ipywidgets", specifier = ">=8.1.8" },
+]
+qt = [
     { name = "coloredlogs", specifier = ">=15.0.1" },
     { name = "pyqt5", specifier = ">=5.15.11" },
+    { name = "pyqt5-stubs", specifier = ">=5.15.6.0" },
     { name = "pyqt6", specifier = ">=6.9.1" },
     { name = "pyqtgraph", specifier = ">=0.13.7" },
     { name = "qtpy", specifier = ">=2.4.3" },
 ]
-notebook = [{ name = "hvplot", specifier = ">=0.12.1" }]
 
 [[package]]
 name = "xyzservices"
