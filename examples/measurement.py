@@ -31,6 +31,7 @@ The `result` attribute fetches the xarray DataArray with the measured data.
 # %%
 from typing import Any
 from xmsr import Measurement, VariableData
+from xmsr.runner import Runner
 from time import sleep
 import numpy as np
 
@@ -47,8 +48,8 @@ class BasicMeasurement(Measurement):
 
 
 measurement1 = BasicMeasurement()
-measurement1.run()
-measurement1.result
+runner = Runner(measurement1)
+await runner.task
 # %% [markdown]
 """
 ## Non-blocking mode

@@ -177,6 +177,14 @@ class Measurement(Thread):
         if hasattr(self, "pbar"):
             self.progress_queue.put_nowait(self._get_progress_dict())
 
+    @property
+    def current_point(self) -> tuple[tuple[int, ...], tuple[Any, ...]]:
+        return self._combinations[self.current_index]
+
+    @property
+    def ntotal(self) -> int:
+        return len(self._combinations)
+
     def get_index_by_indices(self, indices: tuple[int, ...]) -> int:
         for i, (combination_indices, _) in enumerate(self._combinations):
             if combination_indices == indices:
@@ -263,6 +271,64 @@ class Measurement(Thread):
             )
         )
 
+    def _start_measurement(self):
+        self.prepare(self.metadata)
+
+        self._last_measurement_shapes = None
+
+        filename = self.filename + self._get_filename_suffix(
+            self.timestamp, self.with_coords
+        )
+
+        self._path = (Path(self.target_directory) / filename).with_suffix(".zarr")
+        self.LOG.info(f"Results will be stored in:\n{filename}")
+        self.LOG.info(f"Full path:\n{os.path.abspath(self._path)}")
+
+        try:
+            self.current_index = zarr.open(str(self._path), mode="r").attrs[
+                _CURRENT_INDEX_KEY
+            ]
+            self.LOG.info(
+                f"Found existing data with {self.current_index} measurements, resuming..."
+            )
+        except Exception:
+            self.current_index = 0
+
+        if self.overwrite and self.current_index > 0:
+            self.LOG.info(f"Overwriting {self.current_index} measurements...")
+            self.current_index = 0
+            shutil.rmtree(self._path)
+
+        self.LOG.info("Starting measurements...")
+
+    def step(self, idx: int | None = None):
+        if idx is None:
+            idx = self.current_index
+
+        indices, values = self._combinations[idx]
+
+        self.LOG.debug(f"Measurement no. {idx} indices: {indices} values: {values}")
+
+        result = self.measure(
+            {k: v for k, v in zip(self.param_coords.keys(), values)},
+            {k: i for k, i in zip(self.param_coords.keys(), indices)},
+            self.metadata,
+        )
+        result = result if isinstance(result, tuple) else (result,)
+
+        if self._last_measurement_shapes is None:
+            self._last_measurement_shapes = tuple(r.shape for r in result)
+        else:
+            assert all(
+                r.shape == ls for r, ls in zip(result, self._last_measurement_shapes)
+            ), "All measurements must have the same shape"
+
+        return result
+
+    def _finalize_measurement(self):
+        self.finish(self.metadata)
+        self._update_metadata()
+
     def run(self) -> None:
         """Start the measurement.
 
@@ -273,34 +339,7 @@ class Measurement(Thread):
         measurement can be resumed by emitting the `toggle_pause` signal again.
         """
         try:
-            self.prepare(self.metadata)
-
-            self._last_measurement_shapes = None
-
-            filename = self.filename + self._get_filename_suffix(
-                self.timestamp, self.with_coords
-            )
-
-            self._path = (Path(self.target_directory) / filename).with_suffix(".zarr")
-            self.LOG.info(f"Results will be stored in:\n{filename}")
-            self.LOG.info(f"Full path:\n{os.path.abspath(self._path)}")
-
-            try:
-                self.current_index = zarr.open(str(self._path), mode="r").attrs[
-                    _CURRENT_INDEX_KEY
-                ]
-                self.LOG.info(
-                    f"Found existing data with {self.current_index} measurements, resuming..."
-                )
-            except Exception:
-                self.current_index = 0
-
-            if self.overwrite and self.current_index > 0:
-                self.LOG.info(f"Overwriting {self.current_index} measurements...")
-                self.current_index = 0
-                shutil.rmtree(self._path)
-
-            self.LOG.info("Starting measurements...")
+            self._start_measurement()
 
             self.running.set()
             self.finished.clear()
@@ -315,35 +354,16 @@ class Measurement(Thread):
 
                 while not self.finished.is_set():
                     self.running.wait()
-                    if self._is_single_run and self.current_index >= len(self._combinations):
+                    if self._is_single_run and self.current_index >= self.ntotal:
                         self.finished.set()
 
                     if self.finished.is_set():
                         break
 
-                    indices, values = self._combinations[self.current_index]
-                    self.LOG.debug(
-                        f"Measurement no. {self.current_index} indices: {indices} values: {values}"
-                    )
+                    result = self.step()
 
-                    result = self.measure(
-                        {k: v for k, v in zip(self.param_coords.keys(), values)},
-                        {k: i for k, i in zip(self.param_coords.keys(), indices)},
-                        self.metadata,
-                    )
-                    result = result if isinstance(result, tuple) else (result,)
-
-                    if self._last_measurement_shapes is None:
-                        self._last_measurement_shapes = tuple(r.shape for r in result)
-                    else:
-                        assert all(
-                            r.shape == ls
-                            for r, ls in zip(result, self._last_measurement_shapes)
-                        ), "All measurements must have the same shape"
-
-                    self._store_ndarray(indices, result)
+                    self.store_ndarray(self.current_point[0], result)
                     self.pbar.update(1)
-
                     self.current_index += 1
 
                     if self.current_index >= len(self._combinations):
@@ -353,8 +373,7 @@ class Measurement(Thread):
 
                 if self.finished.is_set():
                     self.running.clear()
-                    self.finish(self.metadata)
-                    self._update_metadata()
+                    self._finalize_measurement()
 
         except Exception as e:
             self.LOG.exception(e)
@@ -366,14 +385,14 @@ class Measurement(Thread):
             "indices": self._combinations[
                 min(self.current_index, len(self._combinations) - 1)
             ][0],
-        } # type: ignore
+        }  # type: ignore
 
-    def _store_ndarray(
+    def store_ndarray(
         self, indices: tuple[int, ...], data: tuple[np.ndarray, ...]
     ) -> None:
-        assert len(data) == len(
-            self.variables
-        ), "Length of variables must match number of returned arrays"
+        assert len(data) == len(self.variables), (
+            "Length of variables must match number of returned arrays"
+        )
 
         for var, datum in zip(self.variables, data):
             if len(var.dims) != datum.ndim:
@@ -432,7 +451,9 @@ class Measurement(Thread):
 
         # Zarr attributes are for some reason separate from xarray attributes
         # so we hide the data not used in the result
-        zarr.open(str(self._path), mode="a").attrs[_CURRENT_INDEX_KEY] = self.current_index + 1
+        zarr.open(str(self._path), mode="a").attrs[_CURRENT_INDEX_KEY] = (
+            self.current_index + 1
+        )
 
     def _default_data_dims(self, data: np.ndarray) -> tuple[str, ...]:
         return tuple((f"dim{i}" for i in range(data.ndim)))
