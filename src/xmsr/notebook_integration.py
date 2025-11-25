@@ -196,6 +196,8 @@ def live_info(runner, *, update_interval=0.5):
         initial=runner.measurement.current_index,
         total=runner.measurement.ntotal,
         display=False,
+        ncols="100%", # type: ignore[arg-type]
+        dynamic_ncols=True,
     )
 
     run = ipywidgets.Button(description="Run", layout=btn_layout)
@@ -238,7 +240,6 @@ def live_info(runner, *, update_interval=0.5):
         cancel.layout.display = "none"
 
         output.append_display_data(runner.measurement.result)
-            
 
     runner.ioloop.create_task(update())
 
@@ -283,9 +284,9 @@ def _info_html(runner):
         "finished": "#00ff00",
     }[status]
 
-    overhead = runner.overhead()
-    red_level = max(0, min(int(255 * overhead / 100), 255))
-    overhead_color = f"#{red_level:02x}{255 - red_level:02x}{0:02x}"
+    # overhead = runner.overhead()
+    # red_level = max(0, min(int(255 * overhead / 100), 255))
+    # overhead_color = f"#{red_level:02x}{255 - red_level:02x}{0:02x}"
 
     info = [
         ("status", f'<font color="{color}">{status}</font>'),
