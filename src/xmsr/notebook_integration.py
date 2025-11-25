@@ -187,7 +187,7 @@ def live_info(runner, *, update_interval=0.5):
     from IPython.display import display
 
     header = ipywidgets.HTML(
-        value=f"<h3>{runner.measurement.__class__.__name__}</h3>",
+        value=f"<h3 style='color: #e0e0e0;'>{runner.measurement.__class__.__name__}</h3>",
     )
 
     btn_layout = ipywidgets.Layout(width="100px")
@@ -201,8 +201,8 @@ def live_info(runner, *, update_interval=0.5):
     run = ipywidgets.Button(description="Run", layout=btn_layout)
 
     def on_run(_):
-        if progress_bar.container.layout.display == "none":
-            progress_bar.container.layout.display = "flex"
+        if progress_bar.container.layout.visibility == "hidden":
+            progress_bar.container.layout.visibility = "visible"
             progress_bar.displayed = True
 
         runner.pause_unpause()
@@ -220,6 +220,8 @@ def live_info(runner, *, update_interval=0.5):
 
     status = ipywidgets.HTML(value=_info_html(runner))
 
+    output = ipywidgets.Output()
+
     async def update():
         while not runner.task.done():
             await asyncio.sleep(update_interval)
@@ -235,16 +237,25 @@ def live_info(runner, *, update_interval=0.5):
         status.value = _info_html(runner)
         cancel.layout.display = "none"
 
+        output.append_display_data(runner.measurement.result)
+            
+
     runner.ioloop.create_task(update())
 
-    progress_bar.container.layout.display = "none"
+    if runner.status() != "running":
+        progress_bar.container.layout.visibility = "hidden"
+    else:
+        run.description = "Pause"
+        progress_bar.displayed = True
 
     display(
         ipywidgets.VBox(
             (
                 header,
-                ipywidgets.HBox((run, cancel, progress_bar.container)),
+                ipywidgets.HBox((run, cancel)),
                 status,
+                progress_bar.container,
+                output,
             )
         )
     )
@@ -252,9 +263,11 @@ def live_info(runner, *, update_interval=0.5):
 
 def _table_row(i, key, value):
     """Style the rows of a table. Based on the default Jupyterlab table style."""
-    style = "text-align: right; padding: 0.5em 2em; line-height: 1.0;"
+    style = "text-align: right; padding: 0.5em 2em; line-height: 1.0; color: #e0e0e0;"
     if i % 2 == 1:
-        style += " background: var(--md-grey-100);"
+        style += " background: #424242;"
+    else:
+        style += " background: #303030;"
     return f'<tr><th style="{style}">{key}</th><th style="{style}">{value}</th></tr>'
 
 
@@ -262,12 +275,12 @@ def _info_html(runner):
     status = runner.status()
 
     color = {
-        "initialized": "gray",
-        "paused": "cyan",
-        "cancelled": "orange",
-        "failed": "red",
-        "running": "blue",
-        "finished": "green",
+        "initialized": "#808080",
+        "paused": "#00ffff",
+        "cancelled": "#ffa500",
+        "failed": "#ff4444",
+        "running": "#4488ff",
+        "finished": "#00ff00",
     }[status]
 
     overhead = runner.overhead()
@@ -301,7 +314,7 @@ def _info_html(runner):
     table = "\n".join(_table_row(i, k, v) for i, (k, v) in enumerate(info))
 
     return f"""
-        <table>
+        <table style="background-color: #303030; color: #e0e0e0; width: 100%;">
         {table}
         </table>
     """

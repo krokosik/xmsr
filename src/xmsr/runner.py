@@ -214,9 +214,10 @@ class AsyncRunner(BaseRunner):
 
         self.measurement._start_measurement()
 
-        self.task = self.ioloop.create_task(self._run())
         if autostart:
             self.pause_unpause()
+
+        self.task = self.ioloop.create_task(self._run())
         if in_ipynb() and not self.ioloop.is_running():
             warnings.warn(
                 "The runner has been scheduled, but the asyncio "

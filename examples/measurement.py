@@ -48,7 +48,7 @@ class BasicMeasurement(Measurement):
     )  # param coordinates can be 2D
 
     def measure(self, values, indices, metadata):
-        sleep(1)
+        sleep(0.1)
         return np.random.randint(10, size=(10, 10))
 
 
