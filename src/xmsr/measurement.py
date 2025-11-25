@@ -157,7 +157,7 @@ class Measurement(Thread):
             metadata: Serializable data to be stored in the store
                 attributes. You can mutate this dictionary to add more data.
         """
-        self.LOG.info("Preparing...")
+        self.LOG.debug("Preparing...")
 
     @property
     def current_index(self) -> int:
@@ -234,7 +234,7 @@ class Measurement(Thread):
             metadata: Serializable data to be stored in the store
                 attributes. You can mutate this dictionary to add more data.
         """
-        self.LOG.info("Done")
+        self.LOG.debug("Done")
 
     def __init_subclass__(cls):
         if not hasattr(cls, "param_coords"):
@@ -281,25 +281,25 @@ class Measurement(Thread):
         )
 
         self._path = (Path(self.target_directory) / filename).with_suffix(".zarr")
-        self.LOG.info(f"Results will be stored in:\n{filename}")
-        self.LOG.info(f"Full path:\n{os.path.abspath(self._path)}")
+        self.LOG.debug(f"Results will be stored in:\n{filename}")
+        self.LOG.debug(f"Full path:\n{os.path.abspath(self._path)}")
 
         try:
             self.current_index = zarr.open(str(self._path), mode="r").attrs[
                 _CURRENT_INDEX_KEY
             ]
-            self.LOG.info(
+            self.LOG.debug(
                 f"Found existing data with {self.current_index} measurements, resuming..."
             )
         except Exception:
             self.current_index = 0
 
         if self.overwrite and self.current_index > 0:
-            self.LOG.info(f"Overwriting {self.current_index} measurements...")
+            self.LOG.debug(f"Overwriting {self.current_index} measurements...")
             self.current_index = 0
             shutil.rmtree(self._path)
 
-        self.LOG.info("Starting measurements...")
+        self.LOG.debug("Starting measurements...")
 
     def step(self, idx: int | None = None):
         if idx is None:

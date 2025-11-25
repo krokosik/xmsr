@@ -200,8 +200,6 @@ def live_info(runner, *, update_interval=0.5):
 
     run = ipywidgets.Button(description="Run", layout=btn_layout)
 
-    print(progress_bar.container.layout.display)
-
     def on_run(_):
         if progress_bar.container.layout.display == "none":
             progress_bar.container.layout.display = "flex"
