@@ -1,10 +1,10 @@
 import asyncio
-import datetime
+import os.path
 import importlib
 import random
 import warnings
 from contextlib import suppress
-from threading import Thread
+from tqdm.notebook import tqdm_notebook
 
 _holoviews_enabled = False
 _ipywidgets_enabled = False
@@ -186,12 +186,41 @@ def live_info(runner, *, update_interval=0.5):
     import ipywidgets
     from IPython.display import display
 
-    status = ipywidgets.HTML(value=_info_html(runner))
-
-    cancel = ipywidgets.Button(
-        description="cancel runner", layout=ipywidgets.Layout(width="100px")
+    header = ipywidgets.HTML(
+        value=f"<h3>{runner.measurement.__class__.__name__}</h3>",
     )
+
+    btn_layout = ipywidgets.Layout(width="100px")
+
+    progress_bar = tqdm_notebook(
+        initial=runner.measurement.current_index,
+        total=runner.measurement.ntotal,
+        display=False,
+    )
+
+    run = ipywidgets.Button(description="Run", layout=btn_layout)
+
+    print(progress_bar.container.layout.display)
+
+    def on_run(_):
+        if progress_bar.container.layout.display == "none":
+            progress_bar.container.layout.display = "flex"
+            progress_bar.displayed = True
+
+        runner.pause_unpause()
+
+        if run.description == "Pause":
+            run.description = "Run"
+            progress_bar.unpause()
+        else:
+            run.description = "Pause"
+
+    run.on_click(on_run)
+
+    cancel = ipywidgets.Button(description="Cancel", layout=btn_layout)
     cancel.on_click(lambda _: runner.cancel())
+
+    status = ipywidgets.HTML(value=_info_html(runner))
 
     async def update():
         while not runner.task.done():
@@ -199,20 +228,33 @@ def live_info(runner, *, update_interval=0.5):
 
             if should_update(status):
                 status.value = _info_html(runner)
+                completed, _ = runner.progress()
+                progress_bar.update(completed - progress_bar.n)
             else:
                 await asyncio.sleep(0.05)
 
+        progress_bar.close()
         status.value = _info_html(runner)
         cancel.layout.display = "none"
 
     runner.ioloop.create_task(update())
 
-    display(ipywidgets.VBox((status, cancel)))
+    progress_bar.container.layout.display = "none"
+
+    display(
+        ipywidgets.VBox(
+            (
+                header,
+                ipywidgets.HBox((run, cancel, progress_bar.container)),
+                status,
+            )
+        )
+    )
 
 
 def _table_row(i, key, value):
     """Style the rows of a table. Based on the default Jupyterlab table style."""
-    style = "text-align: right; padding: 0.5em 0.5em; line-height: 1.0;"
+    style = "text-align: right; padding: 0.5em 2em; line-height: 1.0;"
     if i % 2 == 1:
         style += " background: var(--md-grey-100);"
     return f'<tr><th style="{style}">{key}</th><th style="{style}">{value}</th></tr>'
@@ -222,6 +264,8 @@ def _info_html(runner):
     status = runner.status()
 
     color = {
+        "initialized": "gray",
+        "paused": "cyan",
         "cancelled": "orange",
         "failed": "red",
         "running": "blue",
@@ -234,9 +278,18 @@ def _info_html(runner):
 
     info = [
         ("status", f'<font color="{color}">{status}</font>'),
-        ("elapsed time", datetime.timedelta(seconds=runner.elapsed_time())),
-        ("overhead", f'<font color="{overhead_color}">{overhead:.2f}%</font>'),
+        # ("elapsed time", datetime.timedelta(seconds=runner.elapsed_time())),
+        # ("overhead", f'<font color="{overhead_color}">{overhead:.2f}%</font>'),
     ]
+    with suppress(Exception):
+        info.append(("filename", str(runner.measurement._path.name)))
+        info.append(
+            (
+                "clipboard",
+                f'<button style="display: inline-block;" onclick="navigator.clipboard.writeText(\'{runner.measurement._path.name}\')">Copy Filename</button>'
+                + f'<button style="display: inline-block; margin-left: 10px;" onclick="navigator.clipboard.writeText(\'{os.path.abspath(runner.measurement._path)}\')">Copy Path</button>',
+            )
+        )
 
     with suppress(Exception):
         info.append(("# of points", runner.learner.npoints))

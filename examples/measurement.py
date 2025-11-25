@@ -36,6 +36,11 @@ from time import sleep
 import numpy as np
 
 
+from xmsr.notebook_integration import notebook_extension
+
+notebook_extension()
+
+
 class BasicMeasurement(Measurement):
     target_directory = "tmp"
     param_coords = dict(
@@ -43,13 +48,13 @@ class BasicMeasurement(Measurement):
     )  # param coordinates can be 2D
 
     def measure(self, values, indices, metadata):
-        sleep(0.1)
+        sleep(1)
         return np.random.randint(10, size=(10, 10))
 
 
 measurement1 = BasicMeasurement()
 runner = Runner(measurement1)
-await runner.task
+runner.live_info()
 # %% [markdown]
 """
 ## Non-blocking mode

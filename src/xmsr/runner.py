@@ -3,19 +3,14 @@ from __future__ import annotations
 import abc
 import asyncio
 import concurrent.futures as concurrent
-import functools
 import inspect
-import itertools
-import pickle
-import platform
 import time
 import traceback
 import warnings
 from collections.abc import Callable
 from contextlib import suppress
 from datetime import datetime, timedelta
-from importlib.util import find_spec
-from typing import TYPE_CHECKING, Any, Literal, TypeAlias
+from typing import TYPE_CHECKING, Any, TypeAlias
 from xmsr.measurement import Measurement
 
 from xmsr.notebook_integration import in_ipynb, live_info, live_plot
@@ -136,6 +131,29 @@ class BaseRunner(metaclass=abc.ABCMeta):
         Is called in `overhead`.
         """
 
+    def overhead(self) -> float:
+        """Overhead of using Adaptive and the executor in percent.
+
+        This is measured as ``100 * (1 - t_function / t_elapsed)``.
+
+        Notes
+        -----
+        This includes the overhead of the executor that is being used.
+        The slower your function is, the lower the overhead will be. The
+        learners take ~5-50 ms to suggest a point and sending that point to
+        the executor also takes about ~5 ms, so you will benefit from using
+        Adaptive whenever executing the function takes longer than 100 ms.
+        This of course depends on the type of executor and the type of learner
+        but is a rough rule of thumb.
+        """
+        t_function = self._elapsed_function_time
+        if t_function == 0:
+            # When no function is done executing, the overhead cannot
+            # reliably be determined, so 0 is the best we can do.
+            return 0
+        t_total = self.elapsed_time()
+        return (1 - t_function / t_total) * 100
+
     @abc.abstractmethod
     def _submit(self, pid: int) -> FutureTypes:
         """Is called in `_get_futures`."""
@@ -160,10 +178,12 @@ class BaseRunner(metaclass=abc.ABCMeta):
 
 
 class AsyncRunner(BaseRunner):
+
     def __init__(
         self,
         measurement: Measurement,
         *,
+        autostart: bool = False,
         executor: ExecutorTypes | None = None,
         shutdown_executor: bool = False,
         ioloop=None,
@@ -178,6 +198,8 @@ class AsyncRunner(BaseRunner):
             raise_if_retries_exceeded=raise_if_retries_exceeded,
         )
         self.ioloop = ioloop or asyncio.get_event_loop()
+        self.started = asyncio.Event()
+        self.running = asyncio.Event()
 
         # When the learned function is 'async def', we run it
         # directly on the event loop, and not in the executor.
@@ -190,8 +212,11 @@ class AsyncRunner(BaseRunner):
                 )
             self.executor.shutdown()  # Make sure we don't shoot ourselves later
 
+        self.measurement._start_measurement()
+
         self.task = self.ioloop.create_task(self._run())
-        self.saving_task: asyncio.Task | None = None
+        if autostart:
+            self.pause_unpause()
         if in_ipynb() and not self.ioloop.is_running():
             warnings.warn(
                 "The runner has been scheduled, but the asyncio "
@@ -218,11 +243,31 @@ class AsyncRunner(BaseRunner):
         except asyncio.CancelledError:
             return "cancelled"
         except asyncio.InvalidStateError:
-            return "running"
+            if not self.started.is_set():
+                return "initialized"
+            elif not self.running.is_set():
+                return "paused"
+            else:
+                return "running"
         except Exception:
             return "failed"
         else:
             return "finished"
+
+    def pause_unpause(self) -> None:
+        """Pause or unpause the runner."""
+        if self.running.is_set():
+            self.running.clear()
+        else:
+            self.running.set()
+            if not self.started.is_set():
+                self.started.set()
+                self.start_time = time.time()
+
+    def progress(self) -> tuple[int, int]:
+        """Return the progress as a tuple of
+        (number of completed points, total number of points)."""
+        return (self.measurement.current_index, self.measurement.ntotal)
 
     def cancel(self) -> None:
         """Cancel the runner.
@@ -285,63 +330,14 @@ class AsyncRunner(BaseRunner):
         """
         return live_info(self, update_interval=update_interval)
 
-    def live_info_terminal(
-        self, *, update_interval: float = 0.5, overwrite_previous: bool = True
-    ) -> asyncio.Task:
-        """
-        Display live information about the runner in the terminal.
-
-        This function provides a live update of the runner's status in the terminal.
-        The update can either overwrite the previous status or be printed on a new line.
-
-        Parameters
-        ----------
-        update_interval : float, optional
-            The time interval (in seconds) at which the runner's status is updated
-            in the terminal. Default is 0.5 seconds.
-        overwrite_previous : bool, optional
-            If True, each update will overwrite the previous status in the terminal.
-            If False, each update will be printed on a new line.
-            Default is True.
-
-        Returns
-        -------
-        asyncio.Task
-            The asynchronous task responsible for updating the runner's status in
-            the terminal.
-
-        Examples
-        --------
-        >>> runner = AsyncRunner(...)
-        >>> runner.live_info_terminal(update_interval=1.0, overwrite_previous=False)
-
-        Notes
-        -----
-        This function uses ANSI escape sequences to control the terminal's cursor
-        position. It might not work as expected on all terminal emulators.
-        """
-
-        async def _update(runner: AsyncRunner) -> None:
-            try:
-                while not runner.task.done():
-                    if overwrite_previous:
-                        # Clear the terminal
-                        print("\033[H\033[J", end="")
-                    print(_info_text(runner, separator="\t"))
-                    await asyncio.sleep(update_interval)
-
-            except asyncio.CancelledError:
-                print("Live info display cancelled.")
-
-        return self.ioloop.create_task(_update(self))
-
     async def _run(self) -> None:
         first_completed = asyncio.FIRST_COMPLETED
 
-        self.measurement._start_measurement()
+        await self.started.wait()
 
         try:
             while self.measurement.current_index < self.measurement.ntotal:
+                await self.running.wait()
                 futures = self._get_futures()
                 done, _ = await asyncio.wait(futures, return_when=first_completed)  # type: ignore[arg-type,type-var]
                 self._process_futures(done)
@@ -356,6 +352,8 @@ class AsyncRunner(BaseRunner):
     def elapsed_time(self) -> float:
         """Return the total time elapsed since the runner
         was started."""
+        if not self.started.is_set():
+            return 0
         if self.task.done():
             end_time = self.end_time
             if end_time is None:
@@ -365,43 +363,6 @@ class AsyncRunner(BaseRunner):
         else:
             end_time = time.time()
         return end_time - self.start_time
-
-
-def _info_text(runner, separator: str = "\n"):
-    status = runner.status()
-
-    color_map = {
-        "cancelled": "\033[33m",  # Yellow
-        "failed": "\033[31m",  # Red
-        "running": "\033[34m",  # Blue
-        "finished": "\033[32m",  # Green
-    }
-
-    overhead = runner.overhead()
-    if overhead < 50:
-        overhead_color = "\033[32m"  # Green
-    else:
-        overhead_color = "\033[31m"  # Red
-
-    info = [
-        ("time", str(datetime.now())),
-        ("status", f"{color_map[status]}{status}\033[0m"),
-        ("elapsed time", str(timedelta(seconds=runner.elapsed_time()))),
-        ("overhead", f"{overhead_color}{overhead:.2f}%\033[0m"),
-    ]
-
-    with suppress(Exception):
-        info.append(("# of points", runner.learner.npoints))
-
-    with suppress(Exception):
-        info.append(("# of samples", runner.learner.nsamples))
-
-    with suppress(Exception):
-        info.append(("latest loss", f"{runner.learner._cache['loss']:.3f}"))
-
-    width = 30
-    formatted_info = [f"{k}: {v}".ljust(width) for i, (k, v) in enumerate(info)]
-    return separator.join(formatted_info)
 
 
 # Default runner
