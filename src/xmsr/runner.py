@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import abc
 import asyncio
 import concurrent.futures as concurrent
@@ -9,18 +7,14 @@ import traceback
 import warnings
 from collections.abc import Callable
 from contextlib import suppress
-from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, Any, TypeAlias
+from typing import Any, TypeAlias
 from xmsr.measurement import Measurement
+import holoviews as hv
 
 from xmsr.notebook_integration import in_ipynb, live_info, live_plot
 
 FutureTypes: TypeAlias = concurrent.Future | asyncio.Future
-
-if TYPE_CHECKING:
-    import holoviews
-
-    from ._types import ExecutorTypes
+ExecutorTypes: TypeAlias = concurrent.Executor
 
 
 with suppress(ModuleNotFoundError):
@@ -178,7 +172,6 @@ class BaseRunner(metaclass=abc.ABCMeta):
 
 
 class AsyncRunner(BaseRunner):
-
     def __init__(
         self,
         measurement: Measurement,
@@ -288,11 +281,11 @@ class AsyncRunner(BaseRunner):
     def live_plot(
         self,
         *,
-        plotter: Callable[[Measurement], holoviews.Element] | None = None,
+        plotter: Callable[[Measurement], hv.Element] | None = None,
         update_interval: float = 2.0,
         name: str | None = None,
         normalize: bool = True,
-    ) -> holoviews.DynamicMap:
+    ) -> hv.DynamicMap:
         """Live plotting of the measurement data.
 
         Parameters

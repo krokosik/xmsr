@@ -30,6 +30,8 @@ The `result` attribute fetches the xarray DataArray with the measured data.
 
 # %%
 from typing import Any
+
+from xarray import DataArray
 from xmsr import Measurement, VariableData
 from xmsr.runner import Runner
 from time import sleep
@@ -51,6 +53,13 @@ class BasicMeasurement(Measurement):
     def measure(self, values, indices, metadata):
         sleep(0.1)
         return np.random.randint(10, size=(10, 10))
+    
+    def plot_preview(self, measurement_da: DataArray):
+        return measurement_da.mean(dim=["x", "y"]).hvplot.heatmap(
+            x="a", y="b", title="Preview of random-data"
+        )
+    
+    
 
 
 measurement1 = BasicMeasurement()
@@ -174,3 +183,4 @@ class MultiMeasurement(Measurement):
 multi_measurement = MultiMeasurement()
 multi_measurement.run()
 multi_measurement.result
+# %%

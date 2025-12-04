@@ -38,8 +38,28 @@ def notebook_extension(*, _inline_js=True):
     try:
         if not _ipywidgets_enabled:
             import ipywidgets  # noqa: F401
+            from IPython.display import display, HTML
 
             _ipywidgets_enabled = True
+
+            display(
+                HTML(
+                    """
+            <style>
+            /*overwrite hard coded write background by vscode for ipywidges */
+            .cell-output-ipywidget-background {
+               background-color: transparent !important;
+            }
+
+            /*set widget foreground text and color of interactive widget to vs dark theme color */
+            :root {
+                --jp-widgets-color: var(--vscode-editor-foreground);
+                --jp-widgets-font-size: var(--vscode-editor-font-size);
+            }
+            </style>
+            """
+                )
+            )
     except ModuleNotFoundError:
         warnings.warn(
             "ipywidgets is not installed; live_info is disabled.",
@@ -70,7 +90,15 @@ def in_ipynb() -> bool:
 active_plotting_tasks: dict[str, asyncio.Task] = {}
 
 
-def live_plot(runner, *, plotter=None, update_interval=2, name=None, normalize=True):
+def live_plot(
+    runner,
+    *,
+    step_plotter=None,
+    full_plotter=None,
+    update_interval=2,
+    name=None,
+    normalize=True,
+):
     """Live plotting of the learner's data.
 
     Parameters
@@ -126,7 +154,7 @@ def live_plot(runner, *, plotter=None, update_interval=2, name=None, normalize=T
     )
 
     # Could have used dm.periodic in the following, but this would either spin
-    # off a thread (and learner is not threadsafe) or block the kernel.
+    # off a thread (and measurement is not threadsafe) or block the kernel.
 
     async def updater():
         event = lambda: hv.streams.Stream.trigger(  # noqa: E731
@@ -196,7 +224,7 @@ def live_info(runner, *, update_interval=0.5):
         initial=runner.measurement.current_index,
         total=runner.measurement.ntotal,
         display=False,
-        ncols="100%", # type: ignore[arg-type]
+        ncols="100%",  # type: ignore[arg-type]
         dynamic_ncols=True,
     )
 

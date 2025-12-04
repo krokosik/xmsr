@@ -13,12 +13,15 @@ from queue import Queue
 from threading import Event, Thread
 from typing import Any, Optional, TypedDict, Union
 
+import holoviews as hv
+import hvplot.xarray  # noqa: F401
 import numpy as np
 import numpy.typing as npt
 import xarray as xr
 import zarr
 from tqdm import tqdm
 from tqdm.contrib.logging import tqdm_logging_redirect
+
 
 _CURRENT_INDEX_KEY = "__CURRENT_INDEX__"
 
@@ -507,35 +510,27 @@ class Measurement(Thread):
         if hasattr(self, "pbar") and self.pbar is not None:
             self.pbar.close()
 
-    def plot_result(self, *args, **kwargs):
+    def plot_result(self, *args, **kwargs) -> hv.Element | None:
         try:
-            return self.result.plot(*args, **kwargs)
+            return self.result.hvplot(*args, **kwargs)
         except Exception:
             self.LOG.error(
                 "Default plot_result method failed, please provide a custom plot function"
             )
 
+    def plot_single_step(
+        self,
+        measurement_da: xr.DataArray | xr.Dataset,
+    ) -> hv.Element:
+        """Plot a preview of the measurement results."""
+        return measurement_da.hvplot()
+
     def plot_preview(
         self,
-        chunk_da: xr.DataArray | xr.Dataset,
-        full_da: xr.DataArray | xr.Dataset,
-        ax,
-    ):
-        """Plot a preview of the measurement results.
-
-        When the measurement is run through the GUI, this method will be called
-        after each measurement to plot a preview of the results. The plot will be
-        displayed in the GUI. If the method is not implemented, no preview will be
-        shown.
-
-        Args:
-            data: The measurement results for a single coordinate combination. The
-                shape of the array is the same as the shape of the measurement and
-                the dimensions and coordinates are the same as specified in the
-                `data_dims` and `data_coords` class attributes.
-            ax: The matplotlib axis to plot on.
-        """
-        raise NotImplementedError
+        measurement_da: xr.DataArray | xr.Dataset,
+    ) -> hv.Element:
+        """Plot a preview of the measurement results."""
+        return self.plot_single_step(measurement_da)
 
 
 def _prepare_coord(coord: Any) -> npt.ArrayLike:
