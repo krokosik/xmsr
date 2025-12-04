@@ -1,0 +1,349 @@
+import asyncio
+import os.path
+import importlib
+import random
+import warnings
+from contextlib import suppress
+from tqdm.notebook import tqdm_notebook
+
+_holoviews_enabled = False
+_ipywidgets_enabled = False
+
+
+def notebook_extension(*, _inline_js=True):
+    """Enable ipywidgets, holoviews, and asyncio notebook integration."""
+    if not in_ipynb():
+        raise RuntimeError(
+            '"adaptive.notebook_extension()" may only be run from a Jupyter notebook.'
+        )
+
+    global _holoviews_enabled, _ipywidgets_enabled
+
+    # Load holoviews
+    try:
+        _holoviews_enabled = False  # After closing a notebook the js is gone
+        if not _holoviews_enabled:
+            import holoviews
+
+            holoviews.notebook_extension("bokeh", logo=False, inline=_inline_js)
+            _holoviews_enabled = True
+    except ModuleNotFoundError:
+        warnings.warn(
+            "holoviews is not installed; plotting is disabled.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+
+    # Load ipywidgets
+    try:
+        if not _ipywidgets_enabled:
+            import ipywidgets  # noqa: F401
+            from IPython.display import display, HTML
+
+            _ipywidgets_enabled = True
+
+            display(
+                HTML(
+                    """
+            <style>
+            /*overwrite hard coded write background by vscode for ipywidges */
+            .cell-output-ipywidget-background {
+               background-color: transparent !important;
+            }
+
+            /*set widget foreground text and color of interactive widget to vs dark theme color */
+            :root {
+                --jp-widgets-color: var(--vscode-editor-foreground);
+                --jp-widgets-font-size: var(--vscode-editor-font-size);
+            }
+            </style>
+            """
+                )
+            )
+    except ModuleNotFoundError:
+        warnings.warn(
+            "ipywidgets is not installed; live_info is disabled.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+
+
+def ensure_holoviews():
+    try:
+        return importlib.import_module("holoviews")
+    except ModuleNotFoundError:
+        raise RuntimeError(
+            "holoviews is not installed; plotting is disabled."
+        ) from None
+
+
+def in_ipynb() -> bool:
+    try:
+        # If we are running in IPython, then `get_ipython()` is always a global
+        return get_ipython().__class__.__name__ == "ZMQInteractiveShell"  # type: ignore[name-defined]
+    except NameError:
+        return False
+
+
+# Fancy displays in the Jupyter notebook
+
+active_plotting_tasks: dict[str, asyncio.Task] = {}
+
+
+def live_plot(
+    runner,
+    *,
+    step_plotter=None,
+    full_plotter=None,
+    update_interval=2,
+    name=None,
+    normalize=True,
+):
+    """Live plotting of the learner's data.
+
+    Parameters
+    ----------
+    runner : `~adaptive.Runner`
+    plotter : function
+        A function that takes the learner as a argument and returns a
+        holoviews object. By default ``learner.plot()`` will be called.
+    update_interval : int
+        Number of second between the updates of the plot.
+    name : hasable
+        Name for the `live_plot` task in `adaptive.active_plotting_tasks`.
+        By default the name is None and if another task with the same name
+        already exists that other `live_plot` is canceled.
+    normalize : bool
+        Normalize (scale to fit) the frame upon each update.
+
+    Returns
+    -------
+    dm : `holoviews.core.DynamicMap`
+        The plot that automatically updates every `update_interval`.
+    """
+    if not _holoviews_enabled:
+        raise RuntimeError(
+            "Live plotting is not enabled; did you run 'adaptive.notebook_extension()'?"
+        )
+
+    import holoviews as hv
+    import ipywidgets
+    from IPython.display import display
+
+    if name in active_plotting_tasks:
+        active_plotting_tasks[name].cancel()
+
+    def plot_generator():
+        while True:
+            if not plotter:
+                yield runner.learner.plot()
+            else:
+                yield plotter(runner.learner)
+
+    streams = [hv.streams.Stream.define("Next")()]
+    dm = hv.DynamicMap(plot_generator(), streams=streams)
+    dm.cache_size = 1
+
+    if normalize:
+        # XXX: change when https://github.com/pyviz/holoviews/issues/3637
+        # is fixed.
+        dm = dm.map(lambda obj: obj.opts(framewise=True), hv.Element)
+
+    cancel_button = ipywidgets.Button(
+        description="cancel live-plot", layout=ipywidgets.Layout(width="150px")
+    )
+
+    # Could have used dm.periodic in the following, but this would either spin
+    # off a thread (and measurement is not threadsafe) or block the kernel.
+
+    async def updater():
+        event = lambda: hv.streams.Stream.trigger(  # noqa: E731
+            dm.streams
+        )  # XXX: used to be dm.event()
+        # see https://github.com/pyviz/holoviews/issues/3564
+        try:
+            while not runner.task.done():
+                event()
+                await asyncio.sleep(update_interval)
+            event()  # fire off one last update before we die
+        finally:
+            if active_plotting_tasks[name] is asyncio.current_task():
+                active_plotting_tasks.pop(name, None)
+            cancel_button.layout.display = "none"  # remove cancel button
+
+    def cancel(_):
+        with suppress(KeyError):
+            active_plotting_tasks[name].cancel()
+
+    active_plotting_tasks[name] = runner.ioloop.create_task(updater())
+    cancel_button.on_click(cancel)
+
+    display(cancel_button)
+    return dm
+
+
+def should_update(status):
+    try:
+        # Get the length of the write buffer size
+        buffer_size = len(status.comm.kernel.iopub_thread._events)
+
+        # Make sure to only keep all the messages when the notebook
+        # is viewed, this means 'buffer_size == 1'. However, when not
+        # viewing the notebook the buffer fills up. When this happens
+        # we decide to only add messages to it when a certain probability.
+        # i.e. we're offline for 12h, with an update_interval of 0.5s,
+        # and without the reduced probability, we have buffer_size=86400.
+        # With the correction this is np.log(86400) / np.log(1.1) = 119.2
+        return 1.1**buffer_size * random.random() < 1
+    except Exception:
+        # We catch any Exception because we are using a private API.
+        return True
+
+
+def live_info(runner, *, update_interval=0.5):
+    """Display live information about the runner.
+
+    Returns an interactive ipywidget that can be
+    visualized in a Jupyter notebook.
+    """
+    if not _holoviews_enabled:
+        raise RuntimeError(
+            "Live plotting is not enabled; did you run 'adaptive.notebook_extension()'?"
+        )
+
+    import ipywidgets
+    from IPython.display import display
+
+    header = ipywidgets.HTML(
+        value=f"<h3 style='color: #e0e0e0;'>{runner.measurement.__class__.__name__}</h3>",
+    )
+
+    btn_layout = ipywidgets.Layout(width="100px")
+
+    progress_bar = tqdm_notebook(
+        initial=runner.measurement.current_index,
+        total=runner.measurement.ntotal,
+        display=False,
+        ncols="100%",  # type: ignore[arg-type]
+        dynamic_ncols=True,
+    )
+
+    run = ipywidgets.Button(description="Run", layout=btn_layout)
+
+    def on_run(_):
+        if progress_bar.container.layout.visibility == "hidden":
+            progress_bar.container.layout.visibility = "visible"
+            progress_bar.displayed = True
+
+        runner.pause_unpause()
+
+        if run.description == "Pause":
+            run.description = "Run"
+            progress_bar.unpause()
+        else:
+            run.description = "Pause"
+
+    run.on_click(on_run)
+
+    cancel = ipywidgets.Button(description="Cancel", layout=btn_layout)
+    cancel.on_click(lambda _: runner.cancel())
+
+    status = ipywidgets.HTML(value=_info_html(runner))
+
+    output = ipywidgets.Output()
+
+    async def update():
+        while not runner.task.done():
+            await asyncio.sleep(update_interval)
+
+            if should_update(status):
+                status.value = _info_html(runner)
+                completed, _ = runner.progress()
+                progress_bar.update(completed - progress_bar.n)
+            else:
+                await asyncio.sleep(0.05)
+
+        progress_bar.close()
+        status.value = _info_html(runner)
+        cancel.layout.display = "none"
+
+        output.append_display_data(runner.measurement.result)
+
+    runner.ioloop.create_task(update())
+
+    if runner.status() != "running":
+        progress_bar.container.layout.visibility = "hidden"
+    else:
+        run.description = "Pause"
+        progress_bar.displayed = True
+
+    display(
+        ipywidgets.VBox(
+            (
+                header,
+                ipywidgets.HBox((run, cancel)),
+                status,
+                progress_bar.container,
+                output,
+            )
+        )
+    )
+
+
+def _table_row(i, key, value):
+    """Style the rows of a table. Based on the default Jupyterlab table style."""
+    style = "text-align: right; padding: 0.5em 2em; line-height: 1.0; color: #e0e0e0;"
+    if i % 2 == 1:
+        style += " background: #424242;"
+    else:
+        style += " background: #303030;"
+    return f'<tr><th style="{style}">{key}</th><th style="{style}">{value}</th></tr>'
+
+
+def _info_html(runner):
+    status = runner.status()
+
+    color = {
+        "initialized": "#808080",
+        "paused": "#00ffff",
+        "cancelled": "#ffa500",
+        "failed": "#ff4444",
+        "running": "#4488ff",
+        "finished": "#00ff00",
+    }[status]
+
+    # overhead = runner.overhead()
+    # red_level = max(0, min(int(255 * overhead / 100), 255))
+    # overhead_color = f"#{red_level:02x}{255 - red_level:02x}{0:02x}"
+
+    info = [
+        ("status", f'<font color="{color}">{status}</font>'),
+        # ("elapsed time", datetime.timedelta(seconds=runner.elapsed_time())),
+        # ("overhead", f'<font color="{overhead_color}">{overhead:.2f}%</font>'),
+    ]
+    with suppress(Exception):
+        info.append(("filename", str(runner.measurement._path.name)))
+        info.append(
+            (
+                "clipboard",
+                f'<button style="display: inline-block;" onclick="navigator.clipboard.writeText(\'{runner.measurement._path.name}\')">Copy Filename</button>'
+                + f'<button style="display: inline-block; margin-left: 10px;" onclick="navigator.clipboard.writeText(\'{os.path.abspath(runner.measurement._path)}\')">Copy Path</button>',
+            )
+        )
+
+    with suppress(Exception):
+        info.append(("# of points", runner.learner.npoints))
+
+    with suppress(Exception):
+        info.append(("# of samples", runner.learner.nsamples))
+
+    with suppress(Exception):
+        info.append(("latest loss", f"{runner.learner._cache['loss']:.3f}"))
+
+    table = "\n".join(_table_row(i, k, v) for i, (k, v) in enumerate(info))
+
+    return f"""
+        <table style="background-color: #303030; color: #e0e0e0; width: 100%;">
+        {table}
+        </table>
+    """
