@@ -1,5 +1,7 @@
 # xmsr - Xarray Measurement Wrapper
 
+> **WARNING**: the package is under development and not yet ready for full use.
+
 A convenient Python class for running parametric measurements and storing data using a chunked and compressed binary format (Zarr). This wrapper combines high-level APIs for convenient parameter sweep measurements with minimal verbosity and maximum reusability.
 
 ## Overview
