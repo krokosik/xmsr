@@ -8,6 +8,8 @@ keywords = ["measurement", "automation", "data acquisition", "xarray", "zarr"]
 classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Topic :: Scientific/Engineering :: Physics",
@@ -34,3 +36,9 @@ dev = [
     "ipykernel>=6.30.1",
     "ruff>=0.13.3",
 ]
+
+[[tool.uv.index]]
+name = "gitea"
+url = "https://git.qodl.eu/api/packages/wkrokosz/pypi/simple/"
+publish-url = "https://git.qodl.eu/api/packages/wkrokosz/pypi"
+explicit = true
