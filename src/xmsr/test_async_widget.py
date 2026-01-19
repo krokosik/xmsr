@@ -1,6 +1,8 @@
 # %%
 # from IPython import get_ipython
 
+# scratchpad for evaluating async Python and ipywidgets code
+
 # ip = get_ipython()
 # if ip is not None:
 #     ip.run_line_magic("gui", "asyncio")
