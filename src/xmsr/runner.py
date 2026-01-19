@@ -8,9 +8,8 @@ import warnings
 from collections.abc import Callable
 from contextlib import suppress
 from typing import Any, TypeAlias
-from xmsr.measurement import Measurement
-import holoviews as hv
 
+from xmsr.measurement import Measurement
 from xmsr.notebook_integration import in_ipynb, live_info, live_plot
 
 FutureTypes: TypeAlias = concurrent.Future | asyncio.Future
@@ -281,11 +280,11 @@ class AsyncRunner(BaseRunner):
     def live_plot(
         self,
         *,
-        plotter: Callable[[Measurement], hv.Element] | None = None,
+        plotter: Callable[[Measurement]] | None = None,
         update_interval: float = 2.0,
         name: str | None = None,
         normalize: bool = True,
-    ) -> hv.DynamicMap:
+    ):
         """Live plotting of the measurement data.
 
         Parameters
@@ -310,8 +309,8 @@ class AsyncRunner(BaseRunner):
         """
         return live_plot(
             self,
-            plotter=plotter,
-            update_interval=update_interval,
+            # plotter=plotter,
+            # update_interval=update_interval,
             name=name,
             normalize=normalize,
         )
