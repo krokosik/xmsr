@@ -142,9 +142,28 @@ measurement.finished.wait()
 
 ## Installation
 
+Install the core package:
+
 ```bash
 pip install xmsr
 ```
+
+For visualization and notebook features, install with optional dependencies:
+
+```bash
+pip install xmsr[notebook]
+```
+
+### Optional Dependencies
+
+The following packages are optional and enable additional features:
+
+- **holoviews**: Advanced plotting and visualization
+- **hvplot**: Interactive plots for xarray data
+- **ipywidgets**: Jupyter notebook widgets for interactive measurement control
+- **uvloop**: High-performance asyncio event loop (Linux/macOS only)
+
+If these packages are not installed, the corresponding features will be disabled with appropriate warnings.
 
 ## Current Limitations
 
