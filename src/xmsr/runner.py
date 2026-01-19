@@ -6,7 +6,6 @@ import time
 import traceback
 import warnings
 from collections.abc import Callable
-from contextlib import suppress
 from typing import Any, TypeAlias
 
 from xmsr.measurement import Measurement
@@ -14,12 +13,6 @@ from xmsr.notebook_integration import in_ipynb, live_info, live_plot
 
 FutureTypes: TypeAlias = concurrent.Future | asyncio.Future
 ExecutorTypes: TypeAlias = concurrent.Executor
-
-
-with suppress(ModuleNotFoundError):
-    import uvloop
-
-    asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
 
 
 class BaseRunner(metaclass=abc.ABCMeta):
