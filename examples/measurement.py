@@ -29,16 +29,13 @@ The `result` attribute fetches the xarray DataArray with the measured data.
 """
 
 # %%
+from time import sleep
 from typing import Any
 
-from xarray import DataArray
-from xmsr import Measurement, VariableData
-from xmsr.runner import Runner
-from time import sleep
 import numpy as np
+from xarray import DataArray
 
-
-from xmsr.notebook_integration import notebook_extension
+from xmsr import Measurement, Runner, notebook_extension
 
 notebook_extension()
 
@@ -48,18 +45,20 @@ class BasicMeasurement(Measurement):
     param_coords = dict(
         x=list(range(5)), y=[(12, 13), (14, 15)]
     )  # param coordinates can be 2D
-    variables = [VariableData("random-data", ["a", "b"], {"a": range(10), "b": range(10)})]
+    variables = [
+        Measurement.VariableData(
+            "random-data", ["a", "b"], {"a": range(10), "b": range(10)}
+        )
+    ]
 
     def measure(self, values, indices, metadata):
         sleep(0.1)
         return np.random.randint(10, size=(10, 10))
-    
+
     def plot_preview(self, measurement_da: DataArray):
         return measurement_da.mean(dim=["x", "y"]).hvplot.heatmap(
             x="a", y="b", title="Preview of random-data"
         )
-    
-    
 
 
 measurement1 = BasicMeasurement()
@@ -111,7 +110,9 @@ for example `measure` methods.
 
 class ConfiguredMeasurement(BasicMeasurement):
     variables = [
-        VariableData("my-variable", ["z", "t"], {"t": range(10), "z": range(10)})
+        Measurement.VariableData(
+            "my-variable", ["z", "t"], {"t": range(10), "z": range(10)}
+        )
     ]
     # data_dims = ["z", "t"]
     # data_coords = dict(z=list(range(10)), t=list(range(10)))
@@ -170,9 +171,9 @@ class MultiMeasurement(Measurement):
         x=list(range(5)), y=[(12, 13), (14, 15)]
     )  # param coordinates can be 2D
     variables = [
-        VariableData("var1"),  # coordinates are optional
-        VariableData("var2", ["c"], {"c": range(10)}),
-        VariableData("var3", [], {}),
+        Measurement.VariableData("var1"),  # coordinates are optional
+        Measurement.VariableData("var2", ["c"], {"c": range(10)}),
+        Measurement.VariableData("var3", [], {}),
     ]
 
     def measure(self, values, indices, metadata):

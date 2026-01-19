@@ -1,9 +1,10 @@
 import asyncio
-import os.path
 import importlib
+import os.path
 import random
 import warnings
 from contextlib import suppress
+
 from tqdm.notebook import tqdm_notebook
 
 _holoviews_enabled = False
@@ -38,7 +39,7 @@ def notebook_extension(*, _inline_js=True):
     try:
         if not _ipywidgets_enabled:
             import ipywidgets  # noqa: F401
-            from IPython.display import display, HTML
+            from IPython.display import HTML, display
 
             _ipywidgets_enabled = True
 

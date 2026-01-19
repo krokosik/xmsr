@@ -7,8 +7,9 @@
 # if ip is not None:
 #     ip.run_line_magic("gui", "asyncio")
 
-from IPython.display import display
 import asyncio
+
+from IPython.display import display
 
 
 def wait_for_change(widget, value):
@@ -42,9 +43,10 @@ display(out)
 slider
 # %%
 import threading
-from IPython.display import display
-import ipywidgets as widgets
 import time
+
+import ipywidgets as widgets
+from IPython.display import display
 
 progress = widgets.FloatProgress(value=0.0, min=0.0, max=1.0)
 
@@ -75,6 +77,7 @@ widgets.jslink((play, "value"), (slider, "value"))
 widgets.HBox([play, slider])
 # %%
 from queue import Queue
+
 from tqdm.notebook import tqdm_notebook
 
 run_btn = widgets.ToggleButton(description="Run")
@@ -82,6 +85,7 @@ cancel_btn = widgets.Button(description="Cancel")
 progress_bar = tqdm_notebook(total=100, display=False)
 
 running = threading.Event()
+
 
 def work(progress):
     total = 100
@@ -92,6 +96,7 @@ def work(progress):
 
     progress_bar.close()
 
+
 def toggle_run(value):
     if value:
         run_btn.description = "Paused"
@@ -100,12 +105,14 @@ def toggle_run(value):
         run_btn.description = "Run"
         running.set()
 
+
 def cancel_clicked(b):
     run_btn.disabled = True
     cancel_btn.disabled = True
     cancel_btn.description = "Cancelled..."
     running.clear()
     progress_bar.close()
+
 
 w = widgets.HBox(
     [
