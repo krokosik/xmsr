@@ -32,6 +32,7 @@ notebook = [
     "holoviews>=1.22.1",
     "hvplot>=0.12.2",
     "ipywidgets>=8.1.8",
+    "jupyter-bokeh>=4.0.5",
 ]
 
 [build-system]

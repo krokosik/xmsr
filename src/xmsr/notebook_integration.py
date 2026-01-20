@@ -14,9 +14,7 @@ _ipywidgets_enabled = False
 def notebook_extension(*, _inline_js=True):
     """Enable ipywidgets, holoviews, and asyncio notebook integration."""
     if not in_ipynb():
-        raise RuntimeError(
-            '"adaptive.notebook_extension()" may only be run from a Jupyter notebook.'
-        )
+        return
 
     global _holoviews_enabled, _ipywidgets_enabled
 
@@ -123,9 +121,11 @@ def live_plot(
         The plot that automatically updates every `update_interval`.
     """
     if not _holoviews_enabled:
-        raise RuntimeError(
-            "Live plotting is not enabled; did you run 'adaptive.notebook_extension()'?"
+        warnings.warn(
+            "Live plotting is not enabled; did you run 'poetry add xmsr[notebook]'?",
+            RuntimeWarning,
         )
+        return
 
     import holoviews as hv
     import ipywidgets
@@ -207,10 +207,12 @@ def live_info(runner, *, update_interval=0.5):
     Returns an interactive ipywidget that can be
     visualized in a Jupyter notebook.
     """
-    if not _holoviews_enabled:
-        raise RuntimeError(
-            "Live plotting is not enabled; did you run 'adaptive.notebook_extension()'?"
+    if not _ipywidgets_enabled:
+        warnings.warn(
+            "Live info is not enabled; did you run 'poetry add xmsr[notebook]'?",
+            RuntimeWarning,
         )
+        return
 
     import ipywidgets
     from IPython.display import display

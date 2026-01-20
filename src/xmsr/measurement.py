@@ -104,12 +104,12 @@ class Measurement(Thread):
     _param_coords: Mapping[str, Any]
 
     @dataclass
-    class VariableData:
+    class Var:
         name: str
         dims: Collection[str] = field(default_factory=tuple)
         coords: Mapping[str, Any] = field(default_factory=dict)
 
-    variables: list[VariableData]
+    variables: list[Var]
 
     data_dims: Iterable[str]  # deprecated, use VariableData.dims instead
     data_coords: Mapping[str, Any] = {}  # deprecated, use VariableData.coords instead
@@ -245,7 +245,7 @@ class Measurement(Thread):
             )
             if not hasattr(cls, "variables"):
                 cls.variables = [
-                    cls.VariableData(
+                    cls.Var(
                         "result",
                         getattr(cls, "data_dims", ()),
                         getattr(cls, "data_coords", {}),
@@ -255,7 +255,7 @@ class Measurement(Thread):
             logging.warning(
                 "Measurement subclasses should define 'variables' to describe the output data",
             )
-            cls.variables = [cls.VariableData("result", (), {})]
+            cls.variables = [cls.Var("result", (), {})]
 
         setattr(
             cls,

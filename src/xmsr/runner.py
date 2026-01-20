@@ -273,7 +273,7 @@ class AsyncRunner(BaseRunner):
     def live_plot(
         self,
         *,
-        plotter: Callable[[Measurement]] | None = None,
+        plotter: Callable[[Measurement], Any] | None = None,
         update_interval: float = 2.0,
         name: str | None = None,
         normalize: bool = True,
