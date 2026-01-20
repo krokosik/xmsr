@@ -1,9 +1,11 @@
+import contextlib
 import itertools
 import json
 import logging
 import os
 import shutil
 import sys
+import threading
 import time
 from collections.abc import Collection, Iterable, Mapping
 from dataclasses import dataclass, field
@@ -19,6 +21,8 @@ import xarray as xr
 import zarr
 from tqdm import tqdm
 from tqdm.contrib.logging import tqdm_logging_redirect
+
+from xmsr.notebook_integration import live_info
 
 _CURRENT_INDEX_KEY = "__CURRENT_INDEX__"
 
@@ -84,12 +88,6 @@ class Measurement(Thread):
         overwrite: Whether existing values should be overwritten.
     """
 
-    running = Event()
-    progress_queue = Queue[ProgressDict]()
-    revert_progress = Queue[tuple[int, ...]]()
-    chunk_queue = Queue[xr.DataArray | xr.Dataset]()
-    finished = Event()
-
     _is_single_run = True
 
     def _revert_progress(self, indices: Union[tuple[int, ...], int]):
@@ -137,6 +135,7 @@ class Measurement(Thread):
         target_directory: Optional[str] = None,
     ):
         super().__init__()
+        # run params
         self.metadata = metadata if metadata is not None else self.metadata
         self.filename = filename if filename is not None else self.__class__.__name__
         self.timestamp = timestamp if timestamp is not None else self.timestamp
@@ -146,6 +145,16 @@ class Measurement(Thread):
             target_directory if target_directory is not None else self.target_directory
         )
 
+        # threading events and queues
+        self.running = Event()
+        self.progress_queue = Queue[ProgressDict]()
+        self.revert_progress = Queue[tuple[int, ...]]()
+        self.chunk_queue = Queue[xr.DataArray | xr.Dataset]()
+        self.finished = Event()
+        self.cancelled = Event()
+        self.started = Event()
+
+        # logger
         self.LOG = logging.getLogger(self.__class__.__name__)
         self.LOG.setLevel(logging.INFO)
 
@@ -325,8 +334,10 @@ class Measurement(Thread):
         return result
 
     def _finalize_measurement(self):
+        self.LOG.debug("Finalizing measurement...")
         self.finish(self.metadata)
         self._update_metadata()
+        self._ui_finish()
 
     def run(self) -> None:
         """Start the measurement.
@@ -339,44 +350,83 @@ class Measurement(Thread):
         """
         try:
             self._start_measurement()
+            self._live_info()
+
+            self._wait_on(self.started)
 
             self.running.set()
             self.finished.clear()
 
-            with tqdm_logging_redirect(
-                tqdm_class=tqdm,
-                total=len(self._combinations),
-                initial=self.current_index,
-                unit="measurement",
-            ) as self.pbar:
-                self.progress_queue.put_nowait(self._get_progress_dict())
+            # self.progress_queue.put_nowait(self._get_progress_dict())
 
-                while not self.finished.is_set():
-                    self.running.wait()
-                    if self._is_single_run and self.current_index >= self.ntotal:
-                        self.finished.set()
-
-                    if self.finished.is_set():
-                        break
-
-                    result = self.step()
-
-                    self.store_ndarray(self.current_point[0], result)
-                    self.pbar.update(1)
-                    self.current_index += 1
-
-                    if self.current_index >= len(self._combinations):
-                        self.finished.set()
-
-                    time.sleep(0)  # process events in blocking version
+            while not self.finished.is_set():
+                self._wait_on(self.running)
+                if self._is_single_run and self.current_index >= self.ntotal:
+                    self.LOG.debug("Single run completed.")
+                    self.finished.set()
 
                 if self.finished.is_set():
-                    self.running.clear()
-                    self._finalize_measurement()
+                    break
+
+                result = self.step()
+
+                self.store_ndarray(self.current_point[0], result)
+                self.LOG.debug("Stored measurement chunk.")
+                self.current_index += 1
+                self._ui_update()
+                self.LOG.debug("UI updated.")
+
+                self.LOG.debug(f"Current index: {self.current_index}")
+
+                if self.current_index >= self.ntotal:
+                    self.finished.set()
+
+                time.sleep(0)  # process events in blocking version
+
+            if self.finished.is_set():
+                self.running.clear()
+                self._finalize_measurement()
 
         except Exception as e:
             self.LOG.exception(e)
+            self.cancel()
             raise e
+
+    def _wait_on(self, event: threading.Event):
+        if threading.current_thread() is not threading.main_thread():
+            event.wait()
+
+    @property
+    def status(self) -> str:
+        """Return the runner status as a string.
+
+        The possible statuses are: running, cancelled, failed, and finished.
+        """
+        if not self.started.is_set():
+            return "initialized"
+        elif self.cancelled.is_set():
+            return "cancelled"
+        elif self.finished.is_set():
+            return "finished"
+        if not self.running.is_set():
+            return "paused"
+        else:
+            return "running"
+
+    def pause_unpause(self) -> None:
+        """Pause or unpause the runner."""
+        if self.running.is_set():
+            self.running.clear()
+        else:
+            self.running.set()
+            if not self.started.is_set():
+                self.started.set()
+
+    def cancel(self) -> None:
+        """Cancel the runner."""
+        self.cancelled.set()
+        self.finished.set()
+        self.running.clear()
 
     def _get_progress_dict(self) -> ProgressDict:
         return {
@@ -503,8 +553,43 @@ class Measurement(Thread):
         return autogenerated_filename
 
     def __del__(self):
-        if hasattr(self, "pbar") and self.pbar is not None:
-            self.pbar.close()
+        self.finished.set()
+        self._ui_finish()
+
+    def _live_info(self, *, update_interval: float = 0.1) -> None:
+        """Display live information about the runner.
+
+        Returns an interactive ipywidget that can be
+        visualized in a Jupyter notebook.
+        """
+        callbacks = live_info(
+            self,
+            on_toggle_pause=self.pause_unpause,
+            on_cancel=self.cancel,
+        )
+        self._log_redirect_ctx = contextlib.nullcontext()
+
+        if callbacks is None:
+            self.LOG.debug("Notebook unsupported, using default tqdm logging redirect")
+            self._ui_ctx = tqdm_logging_redirect(
+                tqdm_class=tqdm,
+                total=len(self._combinations),
+                initial=self.current_index,
+                unit="measurement",
+            )
+            pbar = self._ui_ctx.__enter__()
+            self._ui_update = lambda: pbar.update()
+            self._ui_finish = lambda: self._ui_ctx.__exit__(None, None, None)
+        else:
+            self.LOG.debug("Using notebook live info integration")
+            ui_update, ui_finish = callbacks
+            self._ui_update = ui_update
+
+            def finish_wrapper():
+                self.LOG.warning("Finalizing UI...")
+                ui_finish()
+
+            self._ui_finish = finish_wrapper
 
     def plot_result(self, *args, **kwargs):
         if hasattr(self.result, "hvplot"):

@@ -1,22 +1,43 @@
 import asyncio
 import importlib
+import logging
 import os.path
 import random
+import sys
 import warnings
-from contextlib import suppress
+from contextlib import contextmanager, suppress
+from typing import TYPE_CHECKING
 
+from IPython.core.getipython import get_ipython
 from tqdm.notebook import tqdm_notebook
+
+if TYPE_CHECKING:
+    from xmsr.measurement import Measurement
 
 _holoviews_enabled = False
 _ipywidgets_enabled = False
+_kernel_do_step = None
 
 
 def notebook_extension(*, _inline_js=True):
     """Enable ipywidgets, holoviews, and asyncio notebook integration."""
+    global _holoviews_enabled, _ipywidgets_enabled, _kernel_do_step
+
     if not in_ipynb():
         return
+    else:
+        _kernel_do_step = get_ipython().kernel.do_one_iteration  # type: ignore[name-defined]
 
-    global _holoviews_enabled, _ipywidgets_enabled
+    try:
+        import nest_asyncio
+
+        nest_asyncio.apply()
+    except ModuleNotFoundError:
+        warnings.warn(
+            "nest_asyncio is not installed; asyncio may not work properly in the notebook.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
 
     # Load holoviews
     try:
@@ -201,7 +222,7 @@ def should_update(status):
         return True
 
 
-def live_info(runner, *, update_interval=0.5):
+def live_info(measurement: "Measurement", *, on_toggle_pause=None, on_cancel=None):
     """Display live information about the runner.
 
     Returns an interactive ipywidget that can be
@@ -218,27 +239,30 @@ def live_info(runner, *, update_interval=0.5):
     from IPython.display import display
 
     header = ipywidgets.HTML(
-        value=f"<h3 style='color: #e0e0e0;'>{runner.measurement.__class__.__name__}</h3>",
+        value=f"<h3 style='color: #e0e0e0;'>{measurement.__class__.__name__}</h3>",
     )
 
     btn_layout = ipywidgets.Layout(width="100px")
 
     progress_bar = tqdm_notebook(
-        initial=runner.measurement.current_index,
-        total=runner.measurement.ntotal,
+        initial=measurement.current_index,
+        total=measurement.ntotal,
         display=False,
         ncols="100%",  # type: ignore[arg-type]
         dynamic_ncols=True,
     )
 
-    run = ipywidgets.Button(description="Run", layout=btn_layout)
+    run = ipywidgets.Button(
+        description="Run", layout=btn_layout, disabled=on_toggle_pause is None
+    )
 
     def on_run(_):
         if progress_bar.container.layout.visibility == "hidden":
             progress_bar.container.layout.visibility = "visible"
             progress_bar.displayed = True
 
-        runner.pause_unpause()
+        if on_toggle_pause is not None:
+            on_toggle_pause()
 
         if run.description == "Pause":
             run.description = "Run"
@@ -248,33 +272,26 @@ def live_info(runner, *, update_interval=0.5):
 
     run.on_click(on_run)
 
-    cancel = ipywidgets.Button(description="Cancel", layout=btn_layout)
-    cancel.on_click(lambda _: runner.cancel())
+    cancel = ipywidgets.Button(
+        description="Cancel", layout=btn_layout, disabled=on_cancel is None
+    )
+    cancel.on_click(lambda _: on_cancel() if on_cancel is not None else None)
 
-    status = ipywidgets.HTML(value=_info_html(runner))
+    status = ipywidgets.HTML(value=_info_html(measurement))
 
     output = ipywidgets.Output()
 
-    async def update():
-        while not runner.task.done():
-            await asyncio.sleep(update_interval)
+    def ui_update():
+        status.value = _info_html(measurement)
+        progress_bar.update(measurement.current_index - progress_bar.n)
 
-            if should_update(status):
-                status.value = _info_html(runner)
-                completed, _ = runner.progress()
-                progress_bar.update(completed - progress_bar.n)
-            else:
-                await asyncio.sleep(0.05)
-
+    def ui_finish():
         progress_bar.close()
-        status.value = _info_html(runner)
+        status.value = _info_html(measurement)
         cancel.layout.display = "none"
+        output.append_display_data(measurement.result)
 
-        output.append_display_data(runner.measurement.result)
-
-    runner.ioloop.create_task(update())
-
-    if runner.status() != "running":
+    if measurement.status != "running":
         progress_bar.container.layout.visibility = "hidden"
     else:
         run.description = "Pause"
@@ -292,6 +309,8 @@ def live_info(runner, *, update_interval=0.5):
         )
     )
 
+    return ui_update, ui_finish
+
 
 def _table_row(i, key, value):
     """Style the rows of a table. Based on the default Jupyterlab table style."""
@@ -303,8 +322,8 @@ def _table_row(i, key, value):
     return f'<tr><th style="{style}">{key}</th><th style="{style}">{value}</th></tr>'
 
 
-def _info_html(runner):
-    status = runner.status()
+def _info_html(measurement: "Measurement") -> str:
+    status = measurement.status
 
     color = {
         "initialized": "#808080",
@@ -325,23 +344,14 @@ def _info_html(runner):
         # ("overhead", f'<font color="{overhead_color}">{overhead:.2f}%</font>'),
     ]
     with suppress(Exception):
-        info.append(("filename", str(runner.measurement._path.name)))
+        info.append(("filename", str(measurement._path.name)))
         info.append(
             (
                 "clipboard",
-                f'<button style="display: inline-block;" onclick="navigator.clipboard.writeText(\'{runner.measurement._path.name}\')">Copy Filename</button>'
-                + f'<button style="display: inline-block; margin-left: 10px;" onclick="navigator.clipboard.writeText(\'{os.path.abspath(runner.measurement._path)}\')">Copy Path</button>',
+                f'<button style="display: inline-block;" onclick="navigator.clipboard.writeText(\'{measurement._path.name}\')">Copy Filename</button>'
+                + f'<button style="display: inline-block; margin-left: 10px;" onclick="navigator.clipboard.writeText(\'{os.path.abspath(measurement._path)}\')">Copy Path</button>',
             )
         )
-
-    with suppress(Exception):
-        info.append(("# of points", runner.learner.npoints))
-
-    with suppress(Exception):
-        info.append(("# of samples", runner.learner.nsamples))
-
-    with suppress(Exception):
-        info.append(("latest loss", f"{runner.learner._cache['loss']:.3f}"))
 
     table = "\n".join(_table_row(i, k, v) for i, (k, v) in enumerate(info))
 
@@ -350,3 +360,68 @@ def _info_html(runner):
         {table}
         </table>
     """
+
+
+class _OutputWidgetHandler(logging.Handler):
+    """Custom logging handler sending logs to an output widget"""
+
+    def __init__(self, out, *args, **kwargs):
+        super(_OutputWidgetHandler, self).__init__(*args, **kwargs)
+        self.out = out
+
+    def emit(self, record):
+        """Overload of logging.Handler method"""
+        formatted_record = self.format(record)
+        new_output = {
+            "name": "stdout",
+            "output_type": "stream",
+            "text": formatted_record + "\n",
+        }
+        self.out.outputs = (new_output,) + self.out.outputs
+
+    def clear_logs(self):
+        """Clear the current logs"""
+        self.out.clear_output()
+
+
+def _is_console_logging_handler(handler):
+    return isinstance(handler, logging.StreamHandler) and handler.stream in {
+        sys.stdout,
+        sys.stderr,
+    }
+
+
+def _get_first_found_console_logging_handler(handlers):
+    for handler in handlers:
+        if _is_console_logging_handler(handler):
+            return handler
+
+
+@contextmanager
+def logging_redirect_ipywidgets(
+    output_widget,
+    loggers=None,
+):
+    """
+    Context manager redirecting console logging to `output_widget.append_display_data()`, leaving
+    other logging handlers (e.g. log files) unaffected.
+    """
+    if loggers is None:
+        loggers = [logging.root]
+    original_handlers_list = [logger.handlers for logger in loggers]
+    try:
+        for logger in loggers:
+            out_handler = _OutputWidgetHandler(output_widget)
+            orig_handler = _get_first_found_console_logging_handler(logger.handlers)
+            if orig_handler is not None:
+                out_handler.setFormatter(orig_handler.formatter)
+                out_handler.stream = orig_handler.stream
+            logger.handlers = [
+                handler
+                for handler in logger.handlers
+                if not _is_console_logging_handler(handler)
+            ] + [out_handler]
+        yield
+    finally:
+        for logger, original_handlers in zip(loggers, original_handlers_list):
+            logger.handlers = original_handlers
