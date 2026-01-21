@@ -1,12 +1,12 @@
 # xmsr - Xarray Measurement Wrapper
 
-> **WARNING**: the package is under development and not yet ready for full use.
-
 A convenient Python class for running parametric measurements and storing data using a chunked and compressed binary format (Zarr). This wrapper combines high-level APIs for convenient parameter sweep measurements with minimal verbosity and maximum reusability.
 
 ## Overview
 
 The `Measurement` class is designed to simplify the process of running multi-dimensional parameter sweeps in experimental physics and other scientific domains. Built on top of **xarray**, it leverages xarray's fantastic declarative syntax and semantics to embed experiment information directly into the data, creating self-documenting datasets with labeled dimensions, coordinates, and metadata.
+
+Its main use is focused on workflows incorporating scripts and interactive Python sessions, but can also acommodate other GUIs like `Qt`.
 
 Key capabilities:
 
@@ -15,7 +15,9 @@ Key capabilities:
 - **Non-blocking execution** - Run measurements in a separate thread with pause/resume capabilities
 - **Declarative data labeling** - Leverage xarray's powerful semantics to embed dimensions, coordinates, and metadata directly into your datasets
 - **Resume capability** - Continue interrupted measurements from existing archives
-- **(Planned) GUI integration** - Built-in measurement runner with progress tracking (IPython compatible)
+- **GUI integration** - informative IPython widgets with run/pause/cancel interactions, progress bar and logging
+- **(WIP) Live plotting** - ability to define custom plots showcasing the measured chunk and the collected data
+- **(Planned) Multi run management** - repeated runs of the same measurement can easily become overwhelming. Merging datasets from filesystems is also a nuisance, so solutions like `xarray DataTree` will be explored for a single hierarchical structure per measurement. 
 
 ## Design Goals
 
@@ -74,16 +76,16 @@ result = measurement.result
 Measure multiple quantities simultaneously:
 
 ```python
-from xmsr import Measurement, VariableData
+from xmsr import Measurement
 
 class MultiMeasurement(Measurement):
     target_directory = "data"
     param_coords = dict(x=range(5), y=range(10))
     
     variables = [
-        VariableData("voltage", ["time"], {"time": range(100)}),
-        VariableData("current", ["time"], {"time": range(100)}),
-        VariableData("resistance"),  # Scalar variable
+        Measurement.Var("voltage", ["time"], {"time": range(100)}),
+        Measurement.Var("current", ["time"], {"time": range(100)}),
+        Measurement.Var("resistance"),  # Scalar variable
     ]
     
     def measure(self, values, indices, metadata):
@@ -140,54 +142,27 @@ measurement.start()
 measurement.finished.wait()
 ```
 
-## Installation
-
-Install the core package:
-
-```bash
-pip install xmsr
-```
-
-For visualization and notebook features, install with optional dependencies:
-
-```bash
-pip install xmsr[notebook]
-```
-
-### Optional Dependencies
-
-The following packages are optional and enable additional features:
-
-- **holoviews**: Advanced plotting and visualization
-- **hvplot**: Interactive plots for xarray data
-- **ipywidgets**: Jupyter notebook widgets for interactive measurement control
-- **uvloop**: High-performance asyncio event loop (Linux/macOS only)
-
-If these packages are not installed, the corresponding features will be disabled with appropriate warnings.
-
 ## Current Limitations
 
 The class currently supports:
 - Blocking execution via `run()`
 - Simple non-blocking execution via `start()`
 
-**Note:** Non-blocking mode may have issues when other threads are used from within the measurement code.
 
 ## Roadmap
 
 Planned features for future releases:
 
 - **Enhanced GUI** 
-  - Progress bar with time estimates
   - Live preview plot of current chunk
   - Partial plot of the entire sweep
-  - Control buttons (pause, resume, abort)
-  
-- **Robust Threading Support**
-  - Better handling of nested threads
-  - Thread-safe measurement execution
+  - file destination select UI
+  - multi measurement UI
+  - ability to *go back in time*
   
 - **Parameter Ordering Optimization**
   - Smart ordering for multidimensional sweeps
   - Minimize jumps in slowly varying parameters
   - Optimize measurement efficiency for specific hardware constraints
+
+- **Suggestions?** - open an issue!
