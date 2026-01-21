@@ -244,7 +244,7 @@ def live_info(
     from IPython.display import display
 
     header = ipywidgets.HTML(
-        value=f"<h3>{measurement.__class__.__name__}</h3>",
+        value=f'<h3 style="margin: 0.5em 0">{measurement.__class__.__name__}</h3>',
     )
 
     btn_layout = ipywidgets.Layout(width="100px")
@@ -321,14 +321,13 @@ def live_info(
                         justify_content="space-between",
                         width="100%",
                         align_items="flex-end",
-                        padding="0.5em 2em",
                     ),
                 ),
                 status,
                 progress_bar.container,
                 output,
             ),
-            layout=ipywidgets.Layout(max_width="720px"),
+            layout=ipywidgets.Layout(max_width="700px"),
         )
     )
 
@@ -344,7 +343,7 @@ def live_info(
 
 def _table_row(i, key, value):
     """Style the rows of a table. Based on the default Jupyterlab table style."""
-    style = "text-align: right; padding: 0.5em 2em; line-height: 1.0;"
+    style = "text-align: right; padding: 0.5em; line-height: 1.0;"
     if i % 2 == 1:
         style += " background: var(--md-grey-100);"
     return f'<tr><th style="{style}">{key}</th><th style="{style}">{value}</th></tr>'
@@ -377,7 +376,7 @@ def _info_html(measurement: "Measurement") -> str:
             (
                 "clipboard",
                 f'<button class="lm-Widget jupyter-widgets jupyter-button" onclick="navigator.clipboard.writeText(\'{measurement._path.name}\')">Filename</button>'
-                + f'<button class="lm-Widget jupyter-widgets jupyter-button" onclick="navigator.clipboard.writeText(\'{os.path.abspath(measurement._path)}\')">Path</button>',
+                + f'<button class="lm-Widget jupyter-widgets jupyter-button" style="margin-right: -0.5em;" onclick="navigator.clipboard.writeText(\'{os.path.abspath(measurement._path)}\')">Path</button>',
             )
         )
 
