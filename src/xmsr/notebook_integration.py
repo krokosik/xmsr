@@ -258,29 +258,37 @@ def live_info(
     )
 
     run = ipywidgets.Button(
-        description="Run", layout=btn_layout, disabled=on_toggle_pause is None
+        description="Start", layout=btn_layout, disabled=on_toggle_pause is None
     )
 
+    cancel = ipywidgets.Button(icon="stop", layout=btn_layout, disabled=True)
+    cancel.on_click(lambda _: on_cancel() if on_cancel is not None else None)
+
+    def run_update():
+        status = measurement.status
+
+        if status == MeasurementStatus.PAUSED:
+            run.icon = "play"
+        elif run.icon != "pause" and status == MeasurementStatus.RUNNING:
+            run.icon = "pause"
+            progress_bar.unpause()
+        else:
+            run.disabled = True
+            cancel.disabled = True
+
     def on_run(_):
-        if progress_bar.container.layout.visibility == "hidden":
+        if not progress_bar.displayed:
             progress_bar.container.layout.visibility = "visible"
             progress_bar.displayed = True
+            run.description = ""
+            cancel.disabled = False
 
         if on_toggle_pause is not None:
             on_toggle_pause()
 
-        if run.description == "Pause":
-            run.description = "Run"
-        else:
-            run.description = "Pause"
-            progress_bar.unpause()
+        run_update()
 
     run.on_click(on_run)
-
-    cancel = ipywidgets.Button(
-        description="Cancel", layout=btn_layout, disabled=on_cancel is None
-    )
-    cancel.on_click(lambda _: on_cancel() if on_cancel is not None else None)
 
     status = ipywidgets.HTML(value=_info_html(measurement))
 
@@ -289,7 +297,7 @@ def live_info(
     def ui_update():
         status.value = _info_html(measurement)
         progress_bar.update(measurement.current_index - progress_bar.n)
-        run.description = "Run" if measurement.status == "paused" else "Pause"
+        run_update()
 
     def ui_finish():
         progress_bar.close()
@@ -307,12 +315,20 @@ def live_info(
     display(
         ipywidgets.VBox(
             (
-                header,
-                ipywidgets.HBox((run, cancel)),
+                ipywidgets.HBox(
+                    (header, ipywidgets.HBox((run, cancel))),
+                    layout=ipywidgets.Layout(
+                        justify_content="space-between",
+                        width="100%",
+                        align_items="flex-end",
+                        padding="0.5em 2em",
+                    ),
+                ),
                 status,
                 progress_bar.container,
                 output,
-            )
+            ),
+            layout=ipywidgets.Layout(max_width="720px"),
         )
     )
 
@@ -360,8 +376,8 @@ def _info_html(measurement: "Measurement") -> str:
         info.append(
             (
                 "clipboard",
-                f'<button style="display: inline-block;" onclick="navigator.clipboard.writeText(\'{measurement._path.name}\')">Copy Filename</button>'
-                + f'<button style="display: inline-block; margin-left: 10px;" onclick="navigator.clipboard.writeText(\'{os.path.abspath(measurement._path)}\')">Copy Path</button>',
+                f'<button class="lm-Widget jupyter-widgets jupyter-button" onclick="navigator.clipboard.writeText(\'{measurement._path.name}\')">Filename</button>'
+                + f'<button class="lm-Widget jupyter-widgets jupyter-button" onclick="navigator.clipboard.writeText(\'{os.path.abspath(measurement._path)}\')">Path</button>',
             )
         )
 

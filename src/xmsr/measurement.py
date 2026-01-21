@@ -637,6 +637,9 @@ class Measurement(Thread):
         """Plot a preview of the measurement results."""
         return self.plot_single_step(measurement_da)
 
+    def _ipython_display_(self):
+        self.start()
+
 
 def _prepare_coord(coord: Any) -> npt.ArrayLike:
     result = np.asarray(coord)

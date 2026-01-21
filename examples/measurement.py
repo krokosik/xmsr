@@ -57,8 +57,7 @@ class BasicMeasurement(Measurement):
         )
 
 
-measurement1 = BasicMeasurement()
-measurement1.start()
+BasicMeasurement()
 # %% [markdown]
 """
 ## Non-blocking mode

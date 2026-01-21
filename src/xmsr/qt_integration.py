@@ -1,12 +1,10 @@
-from qtpy import QtBindingsNotFoundError
-
 _qt_available = False
 
 try:
-    from qtpy import QT_VERSION
+    import qtpy
 
     _qt_available = True
-except QtBindingsNotFoundError:
+except Exception:
     pass
 
 if _qt_available:
