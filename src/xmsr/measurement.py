@@ -1,4 +1,3 @@
-import contextlib
 import itertools
 import json
 import logging
@@ -12,7 +11,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from queue import Queue
-from threading import Event, Thread
+from threading import Event
 from typing import Any, Optional, TypedDict, Union
 
 import numpy as np
@@ -22,7 +21,9 @@ import zarr
 from tqdm import tqdm
 from tqdm.contrib.logging import tqdm_logging_redirect
 
-from xmsr.notebook_integration import live_info
+from xmsr.notebook_integration import live_info, logging_redirect_ipywidgets
+from xmsr.qt_integration import Thread
+from xmsr.shared import MeasurementStatus
 
 _CURRENT_INDEX_KEY = "__CURRENT_INDEX__"
 
@@ -116,6 +117,7 @@ class Measurement(Thread):
     _last_measurement_shapes: Optional[tuple[tuple[int, ...], ...]]
     _current_index: int
     _path: Path
+    _exception: Exception
     LOG: logging.Logger
 
     metadata: dict[str, Any] = {}
@@ -354,6 +356,9 @@ class Measurement(Thread):
 
             self._wait_on(self.started)
 
+            if hasattr(self, "_ui_thread"):
+                self._ui_thread.start()
+
             self.running.set()
             self.finished.clear()
 
@@ -390,28 +395,31 @@ class Measurement(Thread):
         except Exception as e:
             self.LOG.exception(e)
             self.cancel()
+            self._exception = e
             raise e
 
-    def _wait_on(self, event: threading.Event):
+    def _wait_on(self, event: Event):
         if threading.current_thread() is not threading.main_thread():
             event.wait()
 
     @property
-    def status(self) -> str:
+    def status(self) -> MeasurementStatus:
         """Return the runner status as a string.
 
         The possible statuses are: running, cancelled, failed, and finished.
         """
-        if not self.started.is_set():
-            return "initialized"
+        if hasattr(self, "_exception"):
+            return MeasurementStatus.FAILED
+        elif not self.started.is_set():
+            return MeasurementStatus.INIT
         elif self.cancelled.is_set():
-            return "cancelled"
+            return MeasurementStatus.CANCELLED
         elif self.finished.is_set():
-            return "finished"
-        if not self.running.is_set():
-            return "paused"
+            return MeasurementStatus.FINISHED
+        elif not self.running.is_set():
+            return MeasurementStatus.PAUSED
         else:
-            return "running"
+            return MeasurementStatus.RUNNING
 
     def pause_unpause(self) -> None:
         """Pause or unpause the runner."""
@@ -421,6 +429,7 @@ class Measurement(Thread):
             self.running.set()
             if not self.started.is_set():
                 self.started.set()
+        self._ui_update()
 
     def cancel(self) -> None:
         """Cancel the runner."""
@@ -562,14 +571,13 @@ class Measurement(Thread):
         Returns an interactive ipywidget that can be
         visualized in a Jupyter notebook.
         """
-        callbacks = live_info(
+        live_info_elements = live_info(
             self,
             on_toggle_pause=self.pause_unpause,
             on_cancel=self.cancel,
         )
-        self._log_redirect_ctx = contextlib.nullcontext()
 
-        if callbacks is None:
+        if live_info_elements is None:
             self.LOG.debug("Notebook unsupported, using default tqdm logging redirect")
             self._ui_ctx = tqdm_logging_redirect(
                 tqdm_class=tqdm,
@@ -577,19 +585,34 @@ class Measurement(Thread):
                 initial=self.current_index,
                 unit="measurement",
             )
-            pbar = self._ui_ctx.__enter__()
-            self._ui_update = lambda: pbar.update()
+            self.pbar = self._ui_ctx.__enter__()
+            self._ui_update = lambda: self.pbar.update()
             self._ui_finish = lambda: self._ui_ctx.__exit__(None, None, None)
         else:
             self.LOG.debug("Using notebook live info integration")
-            ui_update, ui_finish = callbacks
-            self._ui_update = ui_update
+            self._ui_update = live_info_elements.ui_update
+            self.pbar = live_info_elements.pbar
+
+            self._ui_ctx = logging_redirect_ipywidgets(
+                live_info_elements.output, loggers=[self.LOG]
+            )
+            self._ui_ctx.__enter__()
 
             def finish_wrapper():
-                self.LOG.warning("Finalizing UI...")
-                ui_finish()
+                self.LOG.debug("Finalizing UI...")
+                live_info_elements.ui_finish()
 
             self._ui_finish = finish_wrapper
+
+            # create a thread to periodically update the UI
+            def ui_updater():
+                while not self.finished.is_set():
+                    self._ui_update()
+                    time.sleep(update_interval)
+                self._ui_update()
+                self._ui_ctx.__exit__(None, None, None)
+
+            self._ui_thread = threading.Thread(target=ui_updater, daemon=True)
 
     def plot_result(self, *args, **kwargs):
         if hasattr(self.result, "hvplot"):

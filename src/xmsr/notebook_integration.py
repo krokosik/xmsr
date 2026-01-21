@@ -11,6 +11,8 @@ from typing import TYPE_CHECKING
 from IPython.core.getipython import get_ipython
 from tqdm.notebook import tqdm_notebook
 
+from xmsr.shared import LiveInfoElements, MeasurementStatus
+
 if TYPE_CHECKING:
     from xmsr.measurement import Measurement
 
@@ -62,24 +64,25 @@ def notebook_extension(*, _inline_js=True):
 
             _ipywidgets_enabled = True
 
-            display(
-                HTML(
-                    """
-            <style>
-            /*overwrite hard coded write background by vscode for ipywidges */
-            .cell-output-ipywidget-background {
-               background-color: transparent !important;
-            }
+            # Transparent background for ipywidgets in VSCode Jupyter notebooks
+            # display(
+            #     HTML(
+            #         """
+            # <style>
+            # /*overwrite hard coded write background by vscode for ipywidges */
+            # .cell-output-ipywidget-background {
+            #    background-color: transparent !important;
+            # }
 
-            /*set widget foreground text and color of interactive widget to vs dark theme color */
-            :root {
-                --jp-widgets-color: var(--vscode-editor-foreground);
-                --jp-widgets-font-size: var(--vscode-editor-font-size);
-            }
-            </style>
-            """
-                )
-            )
+            # /*set widget foreground text and color of interactive widget to vs dark theme color */
+            # :root {
+            #     --jp-widgets-color: var(--vscode-editor-foreground);
+            #     --jp-widgets-font-size: var(--vscode-editor-font-size);
+            # }
+            # </style>
+            # """
+            #     )
+            # )
     except ModuleNotFoundError:
         warnings.warn(
             "ipywidgets is not installed; live_info is disabled.",
@@ -222,7 +225,9 @@ def should_update(status):
         return True
 
 
-def live_info(measurement: "Measurement", *, on_toggle_pause=None, on_cancel=None):
+def live_info(
+    measurement: "Measurement", *, on_toggle_pause=None, on_cancel=None
+) -> LiveInfoElements | None:
     """Display live information about the runner.
 
     Returns an interactive ipywidget that can be
@@ -239,7 +244,7 @@ def live_info(measurement: "Measurement", *, on_toggle_pause=None, on_cancel=Non
     from IPython.display import display
 
     header = ipywidgets.HTML(
-        value=f"<h3 style='color: #e0e0e0;'>{measurement.__class__.__name__}</h3>",
+        value=f"<h3>{measurement.__class__.__name__}</h3>",
     )
 
     btn_layout = ipywidgets.Layout(width="100px")
@@ -266,9 +271,9 @@ def live_info(measurement: "Measurement", *, on_toggle_pause=None, on_cancel=Non
 
         if run.description == "Pause":
             run.description = "Run"
-            progress_bar.unpause()
         else:
             run.description = "Pause"
+            progress_bar.unpause()
 
     run.on_click(on_run)
 
@@ -279,19 +284,21 @@ def live_info(measurement: "Measurement", *, on_toggle_pause=None, on_cancel=Non
 
     status = ipywidgets.HTML(value=_info_html(measurement))
 
-    output = ipywidgets.Output()
+    output = ipywidgets.Output(layout=ipywidgets.Layout(height="100px"))
 
     def ui_update():
         status.value = _info_html(measurement)
         progress_bar.update(measurement.current_index - progress_bar.n)
+        run.description = "Run" if measurement.status == "paused" else "Pause"
 
     def ui_finish():
         progress_bar.close()
         status.value = _info_html(measurement)
         cancel.layout.display = "none"
         output.append_display_data(measurement.result)
+        output.layout.height = None
 
-    if measurement.status != "running":
+    if measurement.status != MeasurementStatus.RUNNING:
         progress_bar.container.layout.visibility = "hidden"
     else:
         run.description = "Pause"
@@ -309,16 +316,21 @@ def live_info(measurement: "Measurement", *, on_toggle_pause=None, on_cancel=Non
         )
     )
 
-    return ui_update, ui_finish
+    return LiveInfoElements(
+        ui_update=ui_update,
+        ui_finish=ui_finish,
+        output=output,
+        run_btn=run,
+        cancel_btn=cancel,
+        pbar=progress_bar,
+    )
 
 
 def _table_row(i, key, value):
     """Style the rows of a table. Based on the default Jupyterlab table style."""
-    style = "text-align: right; padding: 0.5em 2em; line-height: 1.0; color: #e0e0e0;"
+    style = "text-align: right; padding: 0.5em 2em; line-height: 1.0;"
     if i % 2 == 1:
-        style += " background: #424242;"
-    else:
-        style += " background: #303030;"
+        style += " background: var(--md-grey-100);"
     return f'<tr><th style="{style}">{key}</th><th style="{style}">{value}</th></tr>'
 
 
@@ -326,12 +338,12 @@ def _info_html(measurement: "Measurement") -> str:
     status = measurement.status
 
     color = {
-        "initialized": "#808080",
-        "paused": "#00ffff",
-        "cancelled": "#ffa500",
-        "failed": "#ff4444",
-        "running": "#4488ff",
-        "finished": "#00ff00",
+        MeasurementStatus.INIT: "#808080",
+        MeasurementStatus.PAUSED: "#00ffff",
+        MeasurementStatus.CANCELLED: "#ffa500",
+        MeasurementStatus.FAILED: "#ff4444",
+        MeasurementStatus.RUNNING: "#4488ff",
+        MeasurementStatus.FINISHED: "#00ff00",
     }[status]
 
     # overhead = runner.overhead()
@@ -339,7 +351,7 @@ def _info_html(measurement: "Measurement") -> str:
     # overhead_color = f"#{red_level:02x}{255 - red_level:02x}{0:02x}"
 
     info = [
-        ("status", f'<font color="{color}">{status}</font>'),
+        ("status", f'<font color="{color}">{status.value}</font>'),
         # ("elapsed time", datetime.timedelta(seconds=runner.elapsed_time())),
         # ("overhead", f'<font color="{overhead_color}">{overhead:.2f}%</font>'),
     ]
@@ -356,7 +368,7 @@ def _info_html(measurement: "Measurement") -> str:
     table = "\n".join(_table_row(i, k, v) for i, (k, v) in enumerate(info))
 
     return f"""
-        <table style="background-color: #303030; color: #e0e0e0; width: 100%;">
+        <table style="width: 100%;">
         {table}
         </table>
     """
