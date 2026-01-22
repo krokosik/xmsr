@@ -45,6 +45,11 @@ class ProgressDict(TypedDict):
     indices: tuple[int, ...]
 
 
+# ============================================================================
+# CLASS DEFINITION & CONFIGURATION
+# ============================================================================
+
+
 class Measurement(Thread):
     """Abstract base class for measurements performing a parametric scan.
 
@@ -90,13 +95,6 @@ class Measurement(Thread):
     """
 
     _is_single_run = True
-
-    def _revert_progress(self, indices: Union[tuple[int, ...], int]):
-        previous_index = getattr(self, "_current_index", 0)
-        self.current_index = indices
-        self.pbar.unpause()
-        self.pbar.update(self.current_index - previous_index)
-        self.progress_queue.put_nowait(self._get_progress_dict())
 
     param_coords: dict[str, Any]
 
@@ -160,93 +158,16 @@ class Measurement(Thread):
         self.LOG = logging.getLogger(self.__class__.__name__)
         self.LOG.setLevel(logging.INFO)
 
-    def prepare(self, metadata: dict[str, Any]):
-        """Perform some actions before the measurement starts.
-
-        Args:
-            metadata: Serializable data to be stored in the store
-                attributes. You can mutate this dictionary to add more data.
-        """
-        self.LOG.debug("Preparing...")
-
-    @property
-    def current_index(self) -> int:
-        return self._current_index
-
-    @current_index.setter
-    def current_index(self, index: Union[tuple[int, ...], int]):
-        self.LOG.debug(f"Setting current index to {index}")
-        if isinstance(index, int):
-            self._current_index = index
-        else:
-            for i, (indices, _) in enumerate(self._combinations):
-                if indices == index:
-                    self._current_index = i
-                    break
-
-        if hasattr(self, "pbar"):
-            self.progress_queue.put_nowait(self._get_progress_dict())
-
-    @property
-    def current_point(self) -> tuple[tuple[int, ...], tuple[Any, ...]]:
-        return self._combinations[self.current_index]
-
-    @property
-    def ntotal(self) -> int:
-        return len(self._combinations)
-
-    def get_index_by_indices(self, indices: tuple[int, ...]) -> int:
-        for i, (combination_indices, _) in enumerate(self._combinations):
-            if combination_indices == indices:
-                return i
-
-        self.LOG.error(f"No combination with indices {indices} found")
-        return -1
-
-    def get_measurement_by_indices(
-        self, indices: tuple[int, ...]
-    ) -> xr.Dataset | xr.DataArray:
-        if not hasattr(self, "_path"):
-            self.LOG.error("Measurement not started yet")
-            return xr.Dataset()
-
-        return (xr.open_dataset if len(self.variables) > 1 else xr.open_dataarray)(
-            self._path, engine="zarr"
-        ).isel(dict(zip(self.param_coords.keys(), indices)))
-
-    def measure(
-        self, values: dict[str, Any], indices: dict[str, int], metadata: dict[str, Any]
-    ) -> np.ndarray | tuple[np.ndarray, ...]:
-        """Perform a single measurement.
-
-        This method must be implemented by subclasses. It should perform a single
-        measurement and return the result as numpy array. It is called once for each
-        combination of parameter values and must always return an array of the same
-        shape and dtype.
-
-        Args:
-            values: values of the currently used parameters
-            indices: indices of the currently used parameters
-            metadata: Serializable data to be stored in the store
-                attributes. You can mutate this dictionary to add more data.
-
-        Returns:
-            np.ndarray | tuple[np.ndarray, ...]: The measurement result. The shape of the array must be the
-                same for all measurements. Return a tuple of arrays if there are multiple values to be stored.
-                In such a scenario, the resulting structure will be an Xarray Dataset instead of a DataArray.
-        """
-        raise NotImplementedError
-
-    def finish(self, metadata: dict[str, Any]):
-        """Perform some actions after the measurement finishes.
-
-        Args:
-            metadata: Serializable data to be stored in the store
-                attributes. You can mutate this dictionary to add more data.
-        """
-        self.LOG.debug("Done")
+    # ============================================================================
+    # SUBCLASS INITIALIZATION
+    # ============================================================================
 
     def __init_subclass__(cls):
+        """Validate and initialize subclass configuration.
+
+        Ensures required attributes are defined and computes parameter combinations
+        for the measurement sweep.
+        """
         if not hasattr(cls, "param_coords"):
             raise ValueError("Measurement subclasses must define 'param_coords'")
 
@@ -281,7 +202,61 @@ class Measurement(Thread):
             )
         )
 
+    # ============================================================================
+    # CORE USER API
+    # ============================================================================
+
+    def prepare(self, metadata: dict[str, Any]):
+        """Perform some actions before the measurement starts.
+
+        Args:
+            metadata: Serializable data to be stored in the store
+                attributes. You can mutate this dictionary to add more data.
+        """
+        self.LOG.debug("Preparing...")
+
+    def measure(
+        self, values: dict[str, Any], indices: dict[str, int], metadata: dict[str, Any]
+    ) -> np.ndarray | tuple[np.ndarray, ...]:
+        """Perform a single measurement.
+
+        This method must be implemented by subclasses. It should perform a single
+        measurement and return the result as numpy array. It is called once for each
+        combination of parameter values and must always return an array of the same
+        shape and dtype.
+
+        Args:
+            values: values of the currently used parameters
+            indices: indices of the currently used parameters
+            metadata: Serializable data to be stored in the store
+                attributes. You can mutate this dictionary to add more data.
+
+        Returns:
+            np.ndarray | tuple[np.ndarray, ...]: The measurement result. The shape of the array must be the
+                same for all measurements. Return a tuple of arrays if there are multiple values to be stored.
+                In such a scenario, the resulting structure will be an Xarray Dataset instead of a DataArray.
+        """
+        raise NotImplementedError
+
+    def finish(self, metadata: dict[str, Any]):
+        """Perform some actions after the measurement finishes.
+
+        Args:
+            metadata: Serializable data to be stored in the store
+                attributes. You can mutate this dictionary to add more data.
+        """
+        self.LOG.debug("Done")
+
+    # ============================================================================
+    # EXECUTION CONTROL
+    # ============================================================================
+
     def _start_measurement(self):
+        """Initialize measurement storage and state.
+
+        Sets up the Zarr archive, checks for existing data to resume from,
+        handles overwrite logic, and prepares for measurement execution.
+        """
         self.prepare(self.metadata)
 
         self._last_measurement_shapes = None
@@ -312,6 +287,14 @@ class Measurement(Thread):
         self.LOG.debug("Starting measurements...")
 
     def step(self, idx: int | None = None):
+        """Execute a single measurement step.
+
+        Args:
+            idx: Index of the measurement step to execute. If None, uses current_index.
+
+        Returns:
+            tuple of numpy arrays containing the measurement results
+        """
         if idx is None:
             idx = self.current_index
 
@@ -334,12 +317,6 @@ class Measurement(Thread):
             ), "All measurements must have the same shape"
 
         return result
-
-    def _finalize_measurement(self):
-        self.LOG.debug("Finalizing measurement...")
-        self.finish(self.metadata)
-        self._update_metadata()
-        self._ui_finish()
 
     def run(self) -> None:
         """Start the measurement.
@@ -398,15 +375,71 @@ class Measurement(Thread):
             self._exception = e
             raise e
 
+    def _finalize_measurement(self):
+        """Clean up and finalize after measurement completion."""
+        self.LOG.debug("Finalizing measurement...")
+        self.finish(self.metadata)
+        self._update_metadata()
+        self._ui_finish()
+
     def _wait_on(self, event: Event):
+        """Wait on an event, skipping if in main thread.
+
+        Args:
+            event: Threading.Event to wait on
+        """
         if threading.current_thread() is not threading.main_thread():
             event.wait()
+
+    # ============================================================================
+    # STATE & PROGRESS TRACKING
+    # ============================================================================
+
+    @property
+    def current_index(self) -> int:
+        """Get the current measurement index."""
+        return self._current_index
+
+    @current_index.setter
+    def current_index(self, index: Union[tuple[int, ...], int]):
+        """Set the current measurement index.
+
+        Accepts either an integer index or a tuple of indices and finds the
+        corresponding linear index.
+
+        Args:
+            index: Integer index or tuple of indices
+        """
+        self.LOG.debug(f"Setting current index to {index}")
+        if isinstance(index, int):
+            self._current_index = index
+        else:
+            for i, (indices, _) in enumerate(self._combinations):
+                if indices == index:
+                    self._current_index = i
+                    break
+
+        if hasattr(self, "pbar"):
+            self.progress_queue.put_nowait(self._get_progress_dict())
+
+    @property
+    def current_point(self) -> tuple[tuple[int, ...], tuple[Any, ...]]:
+        """Get the current (indices, values) tuple for the measurement."""
+        return self._combinations[self.current_index]
+
+    @property
+    def ntotal(self) -> int:
+        """Get the total number of measurement points."""
+        return len(self._combinations)
 
     @property
     def status(self) -> MeasurementStatus:
         """Return the runner status as a string.
 
         The possible statuses are: running, cancelled, failed, and finished.
+
+        Returns:
+            MeasurementStatus: Current status of the measurement
         """
         if hasattr(self, "_exception"):
             return MeasurementStatus.FAILED
@@ -420,6 +453,22 @@ class Measurement(Thread):
             return MeasurementStatus.PAUSED
         else:
             return MeasurementStatus.RUNNING
+
+    def get_index_by_indices(self, indices: tuple[int, ...]) -> int:
+        """Find the linear index for a given tuple of parameter indices.
+
+        Args:
+            indices: Tuple of parameter indices to search for
+
+        Returns:
+            Linear index matching the indices, or -1 if not found
+        """
+        for i, (combination_indices, _) in enumerate(self._combinations):
+            if combination_indices == indices:
+                return i
+
+        self.LOG.error(f"No combination with indices {indices} found")
+        return -1
 
     def pause_unpause(self) -> None:
         """Pause or unpause the runner."""
@@ -438,6 +487,11 @@ class Measurement(Thread):
         self.running.clear()
 
     def _get_progress_dict(self) -> ProgressDict:
+        """Build a progress dictionary for UI updates.
+
+        Returns:
+            ProgressDict containing current progress information
+        """
         return {
             **self.pbar.format_dict,
             "indices": self._combinations[
@@ -445,9 +499,30 @@ class Measurement(Thread):
             ][0],
         }  # type: ignore
 
+    def _revert_progress(self, indices: Union[tuple[int, ...], int]):
+        """Revert progress to a previous index (currently unused)."""
+        previous_index = getattr(self, "_current_index", 0)
+        self.current_index = indices
+        self.pbar.unpause()
+        self.pbar.update(self.current_index - previous_index)
+        self.progress_queue.put_nowait(self._get_progress_dict())
+
+    # ============================================================================
+    # DATA STORAGE
+    # ============================================================================
+
     def store_ndarray(
         self, indices: tuple[int, ...], data: tuple[np.ndarray, ...]
     ) -> None:
+        """Store measurement results to Zarr archive.
+
+        Creates the dataset on first call, then appends to existing archive.
+        Handles both single-variable (DataArray) and multi-variable (Dataset) cases.
+
+        Args:
+            indices: Tuple of parameter indices for this measurement
+            data: Tuple of numpy arrays to store, one per variable
+        """
         assert len(data) == len(self.variables), (
             "Length of variables must match number of returned arrays"
         )
@@ -513,10 +588,42 @@ class Measurement(Thread):
             self.current_index + 1
         )
 
+    def get_measurement_by_indices(
+        self, indices: tuple[int, ...]
+    ) -> xr.Dataset | xr.DataArray:
+        """Retrieve a single measurement from the archive.
+
+        Args:
+            indices: Tuple of parameter indices to retrieve
+
+        Returns:
+            xarray DataArray or Dataset containing the requested measurement
+        """
+        if not hasattr(self, "_path"):
+            self.LOG.error("Measurement not started yet")
+            return xr.Dataset()
+
+        return (xr.open_dataset if len(self.variables) > 1 else xr.open_dataarray)(
+            self._path, engine="zarr"
+        ).isel(dict(zip(self.param_coords.keys(), indices)))
+
     def _default_data_dims(self, data: np.ndarray) -> tuple[str, ...]:
+        """Generate default dimension names for an array.
+
+        Args:
+            data: Numpy array to generate dimensions for
+
+        Returns:
+            Tuple of dimension names like ('dim0', 'dim1', ...)
+        """
         return tuple((f"dim{i}" for i in range(data.ndim)))
 
     def _update_metadata(self):
+        """Update metadata in the Zarr store.
+
+        Note: This is a workaround for xarray issue #8116. Metadata updates
+        need to be manually written to the Zarr .zmetadata file.
+        """
         # ! THIS IS A HACK. Fix this once this issue is resolved: https://github.com/pydata/xarray/issues/8116
         if len(self.variables) != 1:
             return
@@ -539,15 +646,83 @@ class Measurement(Thread):
         xarray DataArray or Dataset, which can be accessed through this property.
         The latter structure is returned if there are multiple variables returned by the
         measurement.
+
+        Returns:
+            xarray DataArray (single variable) or Dataset (multiple variables)
         """
         ds = xr.open_dataset(self._path, engine="zarr")
         if len(self.variables) == 1:
             return ds[self.variables[0].name]
         return ds
 
+    # ============================================================================
+    # VISUALIZATION
+    # ============================================================================
+
+    def plot_result(self, *args, **kwargs):
+        """Plot the complete measurement results.
+
+        Uses hvplot if available, otherwise falls back to matplotlib plot.
+
+        Args:
+            *args: Positional arguments passed to plotting method
+            **kwargs: Keyword arguments passed to plotting method
+
+        Returns:
+            Plot object
+        """
+        if hasattr(self.result, "hvplot"):
+            return self.result.hvplot(*args, **kwargs)
+        else:
+            return self.result.plot(*args, **kwargs)  # type: ignore
+
+    def plot_single_step(
+        self,
+        measurement_da: xr.DataArray | xr.Dataset,
+    ):
+        """Plot a single measurement step.
+
+        Args:
+            measurement_da: xarray DataArray or Dataset to plot
+
+        Returns:
+            Plot object
+        """
+        if hasattr(measurement_da, "hvplot"):
+            return measurement_da.hvplot()
+        else:
+            return measurement_da.plot()  # type: ignore
+
+    def plot_preview(
+        self,
+        measurement_da: xr.DataArray | xr.Dataset,
+    ):
+        """Plot a preview of the measurement results.
+
+        Args:
+            measurement_da: xarray DataArray or Dataset to plot
+
+        Returns:
+            Plot object (delegates to plot_single_step)
+        """
+        return self.plot_single_step(measurement_da)
+
+    # ============================================================================
+    # UI INTEGRATION
+    # ============================================================================
+
     def _get_filename_suffix(
         self, with_timestamp: bool = True, with_coords: bool = True
     ) -> str:
+        """Generate filename suffix based on configuration.
+
+        Args:
+            with_timestamp: Whether to include timestamp in suffix
+            with_coords: Whether to include parameter ranges in suffix
+
+        Returns:
+            Filename suffix string
+        """
         autogenerated_filename = (
             f"__{datetime.now().strftime('%d-%m-%YT%H-%M-%S')}"
             if with_timestamp
@@ -561,15 +736,15 @@ class Measurement(Thread):
 
         return autogenerated_filename
 
-    def __del__(self):
-        self.finished.set()
-        self._ui_finish()
-
     def _live_info(self, *, update_interval: float = 0.1) -> None:
         """Display live information about the runner.
 
-        Returns an interactive ipywidget that can be
-        visualized in a Jupyter notebook.
+        Sets up notebook widgets for progress display, pause/cancel controls,
+        and live plotting. Falls back to tqdm progress bar if notebooks
+        are not supported.
+
+        Args:
+            update_interval: Seconds between UI updates (default: 0.1)
         """
         live_info_elements = live_info(
             self,
@@ -614,34 +789,36 @@ class Measurement(Thread):
 
             self._ui_thread = threading.Thread(target=ui_updater, daemon=True)
 
-    def plot_result(self, *args, **kwargs):
-        if hasattr(self.result, "hvplot"):
-            return self.result.hvplot(*args, **kwargs)
-        else:
-            return self.result.plot(*args, **kwargs)  # type: ignore
-
-    def plot_single_step(
-        self,
-        measurement_da: xr.DataArray | xr.Dataset,
-    ):
-        """Plot a preview of the measurement results."""
-        if hasattr(measurement_da, "hvplot"):
-            return measurement_da.hvplot()
-        else:
-            return measurement_da.plot()  # type: ignore
-
-    def plot_preview(
-        self,
-        measurement_da: xr.DataArray | xr.Dataset,
-    ):
-        """Plot a preview of the measurement results."""
-        return self.plot_single_step(measurement_da)
+    def __del__(self):
+        """Clean up when the measurement object is deleted."""
+        self.finished.set()
+        self._ui_finish()
 
     def _ipython_display_(self):
+        """IPython display hook - start measurement when displayed in Jupyter."""
         self.start()
 
 
+# ============================================================================
+# MODULE-LEVEL HELPER FUNCTIONS
+# ============================================================================
+
+
 def _prepare_coord(coord: Any) -> npt.ArrayLike:
+    """Normalize coordinate arrays for parameter ranges.
+
+    Converts coordinates to numpy arrays, handling 0D, 1D, and 2D cases.
+    2D coords are converted to structured arrays for use as parameter values.
+
+    Args:
+        coord: Input coordinate values (scalar, list, array, or list of tuples)
+
+    Returns:
+        Normalized coordinate array
+
+    Raises:
+        ValueError: If coordinates have more than 2 dimensions
+    """
     result = np.asarray(coord)
 
     if result.ndim == 0:
