@@ -65,24 +65,81 @@ def notebook_extension(*, _inline_js=True):
             _ipywidgets_enabled = True
 
             # Transparent background for ipywidgets in VSCode Jupyter notebooks
-            # display(
-            #     HTML(
-            #         """
-            # <style>
-            # /*overwrite hard coded write background by vscode for ipywidges */
-            # .cell-output-ipywidget-background {
-            #    background-color: transparent !important;
-            # }
+            display(
+                HTML(
+                    """
+<style>
+/*overwrite hard coded write background by vscode for ipywidges */
+.cell-output-ipywidget-background {
+   background-color: transparent !important;
+}
 
-            # /*set widget foreground text and color of interactive widget to vs dark theme color */
-            # :root {
-            #     --jp-widgets-color: var(--vscode-editor-foreground);
-            #     --jp-widgets-font-size: var(--vscode-editor-font-size);
-            # }
-            # </style>
-            # """
-            #     )
-            # )
+/*set widget foreground text and color of interactive widget to vs dark theme color */
+:root {
+    /* Layout and background colors */
+    --jp-layout-color0: var(--vscode-editor-background);
+    --jp-layout-color1: var(--vscode-editorWidget-background);
+    --jp-layout-color2: var(--vscode-input-background);
+    --jp-layout-color3: var(--vscode-dropdown-background);
+
+    /* Inverse layout colors */
+    --jp-inverse-layout-color0: var(--vscode-button-background);
+    --jp-inverse-layout-color1: var(--vscode-button-hoverBackground);
+
+    /* Font and text colors */
+    --jp-content-font-color0: var(--vscode-editor-foreground);
+    --jp-content-font-color1: var(--vscode-descriptionForeground);
+    --jp-content-font-color2: var(--vscode-textSeparator-foreground);
+    --jp-content-font-color3: var(--vscode-textLink-foreground);
+    --jp-ui-font-color0: var(--vscode-foreground);
+    --jp-ui-font-color1: var(--vscode-descriptionForeground);
+
+    /* Border and accent colors */
+    --jp-border-color1: var(--vscode-focusBorder);
+    --jp-border-color2: var(--vscode-editorWidget-border);
+    --jp-brand-color0: var(--vscode-button-background);
+    --jp-brand-color1: var(--vscode-button-hoverBackground);
+    --jp-brand-color2: var(--vscode-badge-background);
+    --jp-accent-color0: var(--vscode-progressBar-background);
+    --jp-accent-color1: var(--vscode-textLink-activeForeground);
+    --jp-accent-color2: var(--vscode-list-highlightForeground);
+
+    /* Status colors */
+    --jp-warn-color0: var(--vscode-editorWarning-foreground);
+    --jp-error-color0: var(--vscode-editorError-foreground);
+    --jp-success-color0: var(--vscode-charts-green);
+    --jp-info-color0: var(--vscode-editorInfo-foreground);
+
+    /* Cell and editor integration */
+    --jp-cell-padding: 4px;
+    --jp-cell-editor-background: var(--vscode-editor-background);
+    --jp-cell-editor-border-color: var(--vscode-focusBorder);
+    --jp-cell-editor-background-edit: var(--vscode-editor-selectionBackground);
+    --jp-cell-editor-border-color-edit: var(--vscode-focusBorder);
+    --jp-cell-prompt-width: 0px;
+
+    /* Fonts and sizing */
+    --jp-ui-font-scale-factor: 1;
+    --jp-ui-font-size0: var(--vscode-font-size);
+    --jp-ui-font-size1: var(--vscode-editor-font-size);
+    --jp-code-font-size: var(--vscode-editor-font-size);
+    --jp-code-line-height: 1.5;
+    --jp-code-padding: 4px;
+    --jp-code-font-family: var(--vscode-editor-font-family);
+
+    /* Widget-specific overrides */
+    --jp-widgets-color: var(--vscode-editor-foreground);
+    --jp-widgets-font-size: var(--vscode-editor-font-size);
+    --jp-widgets-label-color: var(--vscode-editor-foreground);
+    --jp-widgets-readout-color: var(--vscode-descriptionForeground);
+    --jp-widgets-slider-handle-border-color: var(--vscode-focusBorder);
+    --jp-widgets-slider-handle-background-color: var(--vscode-button-background);
+    --jp-widgets-slider-active-handle-color: var(--vscode-button-hoverBackground);
+}
+</style>
+"""
+                )
+            )
     except ModuleNotFoundError:
         warnings.warn(
             "ipywidgets is not installed; live_info is disabled.",
@@ -345,7 +402,7 @@ def _table_row(i, key, value):
     """Style the rows of a table. Based on the default Jupyterlab table style."""
     style = "text-align: right; padding: 0.5em; line-height: 1.0;"
     if i % 2 == 1:
-        style += " background: var(--md-grey-100);"
+        style += " background: var(--jp-layout-color1);"
     return f'<tr><th style="{style}">{key}</th><th style="{style}">{value}</th></tr>'
 
 
@@ -353,12 +410,12 @@ def _info_html(measurement: "Measurement") -> str:
     status = measurement.status
 
     color = {
-        MeasurementStatus.INIT: "#808080",
-        MeasurementStatus.PAUSED: "#00ffff",
-        MeasurementStatus.CANCELLED: "#ffa500",
-        MeasurementStatus.FAILED: "#ff4444",
-        MeasurementStatus.RUNNING: "#4488ff",
-        MeasurementStatus.FINISHED: "#00ff00",
+        MeasurementStatus.INIT: "var(--jp-ui-font-color0)",
+        MeasurementStatus.PAUSED: "var(--jp-ui-font-color1)",
+        MeasurementStatus.CANCELLED: "var(--jp-warn-color0)",
+        MeasurementStatus.FAILED: "var(--jp-error-color0)",
+        MeasurementStatus.RUNNING: "var(--jp-info-color0)",
+        MeasurementStatus.FINISHED: "var(--jp-success-color0)",
     }[status]
 
     # overhead = runner.overhead()
