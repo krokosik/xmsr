@@ -1,73 +1,28 @@
-import asyncio
-import importlib
 import logging
 import os.path
-import random
 import sys
-import warnings
 from contextlib import contextmanager, suppress
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
-from IPython.core.getipython import get_ipython
+import holoviews as hv
+import hvplot.xarray  # noqa: F401
+import ipywidgets as widgets
+import xarray as xr
+from holoviews.streams import Pipe
+from IPython.display import HTML, display
 from tqdm.notebook import tqdm_notebook
 
-from xmsr.shared import LiveInfoElements, MeasurementStatus
+from xmsr.shared import LiveInfoElements, LivePlotElements, MeasurementStatus
 
 if TYPE_CHECKING:
     from xmsr.measurement import Measurement
 
-_holoviews_enabled = False
-_ipywidgets_enabled = False
-_kernel_do_step = None
+hv.notebook_extension("bokeh", logo=False, inline=True)
 
-
-def notebook_extension(*, _inline_js=True):
-    """Enable ipywidgets, holoviews, and asyncio notebook integration."""
-    global _holoviews_enabled, _ipywidgets_enabled, _kernel_do_step
-
-    if not in_ipynb():
-        return
-    else:
-        _kernel_do_step = get_ipython().kernel.do_one_iteration  # type: ignore[name-defined]
-
-    try:
-        import nest_asyncio
-
-        nest_asyncio.apply()
-    except ModuleNotFoundError:
-        warnings.warn(
-            "nest_asyncio is not installed; asyncio may not work properly in the notebook.",
-            RuntimeWarning,
-            stacklevel=2,
-        )
-
-    # Load holoviews
-    try:
-        _holoviews_enabled = False  # After closing a notebook the js is gone
-        if not _holoviews_enabled:
-            import holoviews
-
-            holoviews.notebook_extension("bokeh", logo=False, inline=_inline_js)
-            _holoviews_enabled = True
-    except ModuleNotFoundError:
-        warnings.warn(
-            "holoviews is not installed; plotting is disabled.",
-            RuntimeWarning,
-            stacklevel=2,
-        )
-
-    # Load ipywidgets
-    try:
-        if not _ipywidgets_enabled:
-            import ipywidgets  # noqa: F401
-            from IPython.display import HTML, display
-
-            _ipywidgets_enabled = True
-
-            # Transparent background for ipywidgets in VSCode Jupyter notebooks
-            display(
-                HTML(
-                    """
+# Transparent background for ipywidgets in VSCode Jupyter notebooks
+display(
+    HTML(
+        """
 <style>
 /*overwrite hard coded write background by vscode for ipywidges */
 .cell-output-ipywidget-background {
@@ -138,173 +93,84 @@ def notebook_extension(*, _inline_js=True):
 }
 </style>
 """
-                )
-            )
-    except ModuleNotFoundError:
-        warnings.warn(
-            "ipywidgets is not installed; live_info is disabled.",
-            RuntimeWarning,
-            stacklevel=2,
-        )
-
-
-def ensure_holoviews():
-    try:
-        return importlib.import_module("holoviews")
-    except ModuleNotFoundError:
-        raise RuntimeError(
-            "holoviews is not installed; plotting is disabled."
-        ) from None
-
-
-def in_ipynb() -> bool:
-    try:
-        # If we are running in IPython, then `get_ipython()` is always a global
-        return get_ipython().__class__.__name__ == "ZMQInteractiveShell"  # type: ignore[name-defined]
-    except NameError:
-        return False
-
-
-# Fancy displays in the Jupyter notebook
-
-active_plotting_tasks: dict[str, asyncio.Task] = {}
-
-
-def live_plot(
-    runner,
-    *,
-    step_plotter=None,
-    full_plotter=None,
-    update_interval=2,
-    name=None,
-    normalize=True,
-):
-    """Live plotting of the learner's data.
-
-    Parameters
-    ----------
-    runner : `~adaptive.Runner`
-    plotter : function
-        A function that takes the learner as a argument and returns a
-        holoviews object. By default ``learner.plot()`` will be called.
-    update_interval : int
-        Number of second between the updates of the plot.
-    name : hasable
-        Name for the `live_plot` task in `adaptive.active_plotting_tasks`.
-        By default the name is None and if another task with the same name
-        already exists that other `live_plot` is canceled.
-    normalize : bool
-        Normalize (scale to fit) the frame upon each update.
-
-    Returns
-    -------
-    dm : `holoviews.core.DynamicMap`
-        The plot that automatically updates every `update_interval`.
-    """
-    if not _holoviews_enabled:
-        warnings.warn(
-            "Live plotting is not enabled; did you run 'poetry add xmsr[notebook]'?",
-            RuntimeWarning,
-        )
-        return
-
-    import holoviews as hv
-    import ipywidgets
-    from IPython.display import display
-
-    if name in active_plotting_tasks:
-        active_plotting_tasks[name].cancel()
-
-    def plot_generator():
-        while True:
-            if not plotter:
-                yield runner.learner.plot()
-            else:
-                yield plotter(runner.learner)
-
-    streams = [hv.streams.Stream.define("Next")()]
-    dm = hv.DynamicMap(plot_generator(), streams=streams)
-    dm.cache_size = 1
-
-    if normalize:
-        # XXX: change when https://github.com/pyviz/holoviews/issues/3637
-        # is fixed.
-        dm = dm.map(lambda obj: obj.opts(framewise=True), hv.Element)
-
-    cancel_button = ipywidgets.Button(
-        description="cancel live-plot", layout=ipywidgets.Layout(width="150px")
     )
-
-    # Could have used dm.periodic in the following, but this would either spin
-    # off a thread (and measurement is not threadsafe) or block the kernel.
-
-    async def updater():
-        event = lambda: hv.streams.Stream.trigger(  # noqa: E731
-            dm.streams
-        )  # XXX: used to be dm.event()
-        # see https://github.com/pyviz/holoviews/issues/3564
-        try:
-            while not runner.task.done():
-                event()
-                await asyncio.sleep(update_interval)
-            event()  # fire off one last update before we die
-        finally:
-            if active_plotting_tasks[name] is asyncio.current_task():
-                active_plotting_tasks.pop(name, None)
-            cancel_button.layout.display = "none"  # remove cancel button
-
-    def cancel(_):
-        with suppress(KeyError):
-            active_plotting_tasks[name].cancel()
-
-    active_plotting_tasks[name] = runner.ioloop.create_task(updater())
-    cancel_button.on_click(cancel)
-
-    display(cancel_button)
-    return dm
+)
 
 
-def should_update(status):
+def live_plot(measurement: "Measurement") -> Callable[[], None]:
     try:
-        # Get the length of the write buffer size
-        buffer_size = len(status.comm.kernel.iopub_thread._events)
-
-        # Make sure to only keep all the messages when the notebook
-        # is viewed, this means 'buffer_size == 1'. However, when not
-        # viewing the notebook the buffer fills up. When this happens
-        # we decide to only add messages to it when a certain probability.
-        # i.e. we're offline for 12h, with an update_interval of 0.5s,
-        # and without the reduced probability, we have buffer_size=86400.
-        # With the correction this is np.log(86400) / np.log(1.1) = 119.2
-        return 1.1**buffer_size * random.random() < 1
+        measurement.plot_single_step(xr.DataArray(0))  # test if plotter works
+    except NotImplementedError:
+        use_step_plot = False
     except Exception:
-        # We catch any Exception because we are using a private API.
-        return True
+        use_step_plot = True
+    else:
+        use_step_plot = True
+
+    try:
+        measurement.plot_preview(xr.DataArray(0))
+    except NotImplementedError:
+        use_full_plot = False
+    except Exception:
+        use_full_plot = True
+    else:
+        use_full_plot = True
+
+    step_pipe = None
+    step_dmap = None
+
+    full_pipe = None
+    full_dmap = None
+
+    to_display = []
+
+    def update_plots():
+        nonlocal step_pipe, step_dmap, full_pipe, full_dmap
+
+        step_da = measurement.last_measurement
+        if use_step_plot and step_da is not None:
+            if step_pipe is None:
+                step_pipe = Pipe(data=step_da)
+                step_dmap = hv.DynamicMap(
+                    measurement.plot_single_step, streams=[step_pipe]
+                )
+                to_display.append(step_dmap)
+            elif step_da is not None and step_pipe is not None:
+                step_pipe.send(step_da)
+
+        full_da = measurement.result
+        if use_full_plot and full_da is not None:
+            if full_pipe is None:
+                full_pipe = Pipe(data=full_da)
+                full_dmap = hv.DynamicMap(measurement.plot_preview, streams=[full_pipe])
+                to_display.append(full_dmap)
+            elif full_da is not None and full_pipe is not None:
+                full_pipe.send(full_da)
+
+        if len(to_display) > 0:
+            layout = hv.Layout(to_display).cols(1)
+            if hasattr(measurement, "live_plot_opts"):
+                layout = layout.opts(measurement.live_plot_opts)
+            display(layout)
+            to_display.clear()
+
+    return update_plots
 
 
 def live_info(
     measurement: "Measurement", *, on_toggle_pause=None, on_cancel=None
-) -> LiveInfoElements | None:
+) -> LiveInfoElements:
     """Display live information about the runner.
 
     Returns an interactive ipywidget that can be
     visualized in a Jupyter notebook.
     """
-    if not _ipywidgets_enabled:
-        warnings.warn(
-            "Live info is not enabled; did you run 'poetry add xmsr[notebook]'?",
-            RuntimeWarning,
-        )
-        return
 
-    import ipywidgets
-    from IPython.display import display
-
-    header = ipywidgets.HTML(
+    header = widgets.HTML(
         value=f'<h3 style="margin: 0.5em 0">{measurement.__class__.__name__}</h3>',
     )
 
-    btn_layout = ipywidgets.Layout(width="100px")
+    btn_layout = widgets.Layout(width="100px")
 
     progress_bar = tqdm_notebook(
         initial=measurement.current_index,
@@ -314,11 +180,11 @@ def live_info(
         dynamic_ncols=True,
     )
 
-    run = ipywidgets.Button(
+    run = widgets.Button(
         description="Start", layout=btn_layout, disabled=on_toggle_pause is None
     )
 
-    cancel = ipywidgets.Button(icon="stop", layout=btn_layout, disabled=True)
+    cancel = widgets.Button(icon="stop", layout=btn_layout, disabled=True)
     cancel.on_click(lambda _: on_cancel() if on_cancel is not None else None)
 
     def run_update():
@@ -347,9 +213,9 @@ def live_info(
 
     run.on_click(on_run)
 
-    status = ipywidgets.HTML(value=_info_html(measurement))
+    status = widgets.HTML(value=_info_html(measurement))
 
-    output = ipywidgets.Output(layout=ipywidgets.Layout(height="100px"))
+    output = widgets.Output(layout=widgets.Layout(height="100px"))
 
     def ui_update():
         status.value = _info_html(measurement)
@@ -370,11 +236,11 @@ def live_info(
         progress_bar.displayed = True
 
     display(
-        ipywidgets.VBox(
+        widgets.VBox(
             (
-                ipywidgets.HBox(
-                    (header, ipywidgets.HBox((run, cancel))),
-                    layout=ipywidgets.Layout(
+                widgets.HBox(
+                    (header, widgets.HBox((run, cancel))),
+                    layout=widgets.Layout(
                         justify_content="space-between",
                         width="100%",
                         align_items="flex-end",
@@ -384,7 +250,7 @@ def live_info(
                 progress_bar.container,
                 output,
             ),
-            layout=ipywidgets.Layout(max_width="700px"),
+            layout=widgets.Layout(max_width="700px"),
         )
     )
 
@@ -499,7 +365,7 @@ def logging_redirect_ipywidgets(
             orig_handler = _get_first_found_console_logging_handler(logger.handlers)
             if orig_handler is not None:
                 out_handler.setFormatter(orig_handler.formatter)
-                out_handler.stream = orig_handler.stream
+                out_handler.stream = orig_handler.stream  # type: ignore[assignment]
             logger.handlers = [
                 handler
                 for handler in logger.handlers

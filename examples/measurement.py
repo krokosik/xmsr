@@ -33,7 +33,7 @@ from time import sleep
 from typing import Any
 
 import numpy as np
-from xarray import DataArray
+from xarray import DataArray, Dataset
 
 from xmsr import Measurement
 
@@ -41,23 +41,25 @@ from xmsr import Measurement
 class BasicMeasurement(Measurement):
     target_directory = "tmp"
     param_coords = dict(
-        x=list(range(5)), y=[(12, 13), (14, 15)]
+        x=list(range(15)), y=[(12, 13), (14, 15)]
     )  # param coordinates can be 2D
     variables = [
-        Measurement.Var("random-data", ["a", "b"], {"a": range(10), "b": range(10)})
+        Measurement.Var("noisy-wave", ["time"], {"time": np.linspace(0, 10, 100)})
     ]
 
     def measure(self, values, indices, metadata):
-        sleep(0.5)
-        return np.random.randint(10, size=(10, 10))
+        sleep(0.1)
+        return np.sin(np.linspace(0, 10, 100)) + np.random.randn(100) * 0.1
 
-    def plot_preview(self, measurement_da: DataArray):
-        return measurement_da.mean(dim=["x", "y"]).hvplot.heatmap(
-            x="a", y="b", title="Preview of random-data"
-        )
+    def plot_preview(self, data: DataArray):
+        return data.mean(dim=["x", "y"]).hvplot()
+
+    def plot_single_step(self, data: DataArray | Dataset):
+        return data.hvplot.line()
 
 
-BasicMeasurement()
+bm = BasicMeasurement()
+bm
 # %% [markdown]
 """
 ## Non-blocking mode

@@ -14,6 +14,7 @@ from queue import Queue
 from threading import Event
 from typing import Any, Optional, TypedDict, Union
 
+import holoviews as hv
 import numpy as np
 import numpy.typing as npt
 import xarray as xr
@@ -21,7 +22,7 @@ import zarr
 from tqdm import tqdm
 from tqdm.contrib.logging import tqdm_logging_redirect
 
-from xmsr.notebook_integration import live_info, logging_redirect_ipywidgets
+from xmsr.notebook_integration import live_info, live_plot, logging_redirect_ipywidgets
 from xmsr.qt_integration import Thread
 from xmsr.shared import MeasurementStatus
 
@@ -113,6 +114,7 @@ class Measurement(Thread):
 
     _combinations: list[tuple[tuple[int, ...], tuple[Any, ...]]]
     _last_measurement_shapes: Optional[tuple[tuple[int, ...], ...]]
+    last_measurement: xr.DataArray | xr.Dataset | None
     _current_index: int
     _path: Path
     _exception: Exception
@@ -124,6 +126,8 @@ class Measurement(Thread):
     overwrite: bool = False
     with_coords: bool = True
     target_directory: str = os.getcwd()
+
+    live_plot_opts: hv.opts
 
     def __init__(
         self,
@@ -149,7 +153,7 @@ class Measurement(Thread):
         self.running = Event()
         self.progress_queue = Queue[ProgressDict]()
         self.revert_progress = Queue[tuple[int, ...]]()
-        self.chunk_queue = Queue[xr.DataArray | xr.Dataset]()
+        self.last_measurement = None
         self.finished = Event()
         self.cancelled = Event()
         self.started = Event()
@@ -544,16 +548,18 @@ class Measurement(Thread):
                                 *datum.shape,
                             ),
                             dtype=datum.dtype,
-                        ),
+                        )
+                        * np.nan,
                         dims=tuple(self._param_coords.keys()) + tuple(var.dims),
                         coords={**self._param_coords, **(var.coords or {})},
                     )
                     for var, datum in zip(self.variables, data)
                 }
             )
-            (
-                ds if len(self.variables) > 1 else ds[self.variables[0].name]
-            ).assign_attrs(**self.metadata).to_zarr(self._path, mode="w")
+            self._maybe_da(ds).assign_attrs(**self.metadata).to_zarr(
+                self._path,  # type: ignore
+                mode="w",
+            )
 
         ds = xr.Dataset(
             {
@@ -566,19 +572,17 @@ class Measurement(Thread):
             }
         )
 
-        (ds if len(self.variables) > 1 else ds[self.variables[0].name]).expand_dims(
-            dim=list(self._param_coords.keys())
-        ).drop_vars(
+        self._maybe_da(ds).expand_dims(dim=list(self._param_coords.keys())).drop_vars(
             sum([list(var.coords.keys()) for var in self.variables], [])
         ).to_zarr(
-            self._path,
+            self._path,  # type: ignore
             region={
                 dim: slice(index, index + 1)
                 for dim, index in zip(self._param_coords.keys(), indices)
             },
         )
 
-        self.chunk_queue.put(ds)
+        self.last_measurement = ds
 
         self._update_metadata()
 
@@ -587,6 +591,18 @@ class Measurement(Thread):
         zarr.open(str(self._path), mode="a").attrs[_CURRENT_INDEX_KEY] = (
             self.current_index + 1
         )
+
+    def _maybe_da(self, data: xr.Dataset) -> xr.DataArray | xr.Dataset:
+        """Convert Dataset to DataArray if only one variable is present.
+
+        Args:
+            data: xarray Dataset to potentially convert
+        Returns:
+            xarray DataArray if only one variable, otherwise original Dataset
+        """
+        if len(self.variables) == 1:
+            return data[self.variables[0].name]
+        return data
 
     def get_measurement_by_indices(
         self, indices: tuple[int, ...]
@@ -678,34 +694,31 @@ class Measurement(Thread):
 
     def plot_single_step(
         self,
-        measurement_da: xr.DataArray | xr.Dataset,
+        data: xr.DataArray | xr.Dataset,
     ):
         """Plot a single measurement step.
 
         Args:
-            measurement_da: xarray DataArray or Dataset to plot
+            data: xarray DataArray or Dataset to plot
 
         Returns:
-            Plot object
+            Holoviews plot object
         """
-        if hasattr(measurement_da, "hvplot"):
-            return measurement_da.hvplot()
-        else:
-            return measurement_da.plot()  # type: ignore
+        raise NotImplementedError
 
     def plot_preview(
         self,
-        measurement_da: xr.DataArray | xr.Dataset,
+        data: xr.DataArray | xr.Dataset,
     ):
         """Plot a preview of the measurement results.
 
         Args:
-            measurement_da: xarray DataArray or Dataset to plot
+            data: xarray DataArray or Dataset to plot
 
         Returns:
-            Plot object (delegates to plot_single_step)
+            Holoviews plot object
         """
-        return self.plot_single_step(measurement_da)
+        raise NotImplementedError
 
     # ============================================================================
     # UI INTEGRATION
@@ -751,43 +764,36 @@ class Measurement(Thread):
             on_toggle_pause=self.pause_unpause,
             on_cancel=self.cancel,
         )
+        update_plots = live_plot(self)
 
-        if live_info_elements is None:
-            self.LOG.debug("Notebook unsupported, using default tqdm logging redirect")
-            self._ui_ctx = tqdm_logging_redirect(
-                tqdm_class=tqdm,
-                total=len(self._combinations),
-                initial=self.current_index,
-                unit="measurement",
-            )
-            self.pbar = self._ui_ctx.__enter__()
-            self._ui_update = lambda: self.pbar.update()
-            self._ui_finish = lambda: self._ui_ctx.__exit__(None, None, None)
-        else:
-            self.LOG.debug("Using notebook live info integration")
-            self._ui_update = live_info_elements.ui_update
-            self.pbar = live_info_elements.pbar
+        self.LOG.debug("Using notebook live info integration")
+        self._ui_update = live_info_elements.ui_update
+        self.pbar = live_info_elements.pbar
 
-            self._ui_ctx = logging_redirect_ipywidgets(
-                live_info_elements.output, loggers=[self.LOG]
-            )
-            self._ui_ctx.__enter__()
+        self._ui_ctx = logging_redirect_ipywidgets(
+            live_info_elements.output, loggers=[self.LOG]
+        )
+        self._ui_ctx.__enter__()
 
-            def finish_wrapper():
-                self.LOG.debug("Finalizing UI...")
-                live_info_elements.ui_finish()
+        def finish_wrapper():
+            self.LOG.debug("Finalizing UI...")
+            live_info_elements.ui_finish()
 
-            self._ui_finish = finish_wrapper
+        self._ui_finish = finish_wrapper
 
-            # create a thread to periodically update the UI
-            def ui_updater():
-                while not self.finished.is_set():
-                    self._ui_update()
-                    time.sleep(update_interval)
+        # create a thread to periodically update the UI
+        def ui_updater():
+            idx = 0
+            while not self.finished.is_set():
                 self._ui_update()
-                self._ui_ctx.__exit__(None, None, None)
+                if self.current_index > idx:
+                    idx = self.current_index
+                    update_plots()
+                time.sleep(update_interval)
+            self._ui_update()
+            self._ui_ctx.__exit__(None, None, None)
 
-            self._ui_thread = threading.Thread(target=ui_updater, daemon=True)
+        self._ui_thread = threading.Thread(target=ui_updater, daemon=True)
 
     def __del__(self):
         """Clean up when the measurement object is deleted."""
