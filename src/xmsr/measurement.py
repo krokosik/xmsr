@@ -154,6 +154,7 @@ class Measurement(Thread):
         self.progress_queue = Queue[ProgressDict]()
         self.revert_progress = Queue[tuple[int, ...]]()
         self.last_measurement = None
+        self.last_measurement_queue = Queue[xr.DataArray | xr.Dataset]()
         self.finished = Event()
         self.cancelled = Event()
         self.started = Event()
@@ -280,6 +281,10 @@ class Measurement(Thread):
             self.LOG.debug(
                 f"Found existing data with {self.current_index} measurements, resuming..."
             )
+            current_data = self.result
+            for i in range(self.current_index):
+                indices, _ = self._combinations[i]
+                self.last_measurement_queue.put_nowait(current_data[indices])
         except Exception:
             self.current_index = 0
 
@@ -583,6 +588,10 @@ class Measurement(Thread):
         )
 
         self.last_measurement = ds
+        self.last_measurement_queue.put_nowait(self.last_measurement)
+
+        if hasattr(self, "update_plots"):
+            self.update_plots()
 
         self._update_metadata()
 
@@ -764,7 +773,7 @@ class Measurement(Thread):
             on_toggle_pause=self.pause_unpause,
             on_cancel=self.cancel,
         )
-        update_plots = live_plot(self)
+        self.update_plots = live_plot(self)
 
         self.LOG.debug("Using notebook live info integration")
         self._ui_update = live_info_elements.ui_update
@@ -788,7 +797,6 @@ class Measurement(Thread):
                 self._ui_update()
                 if self.current_index > idx:
                     idx = self.current_index
-                    update_plots()
                 time.sleep(update_interval)
             self._ui_update()
             self._ui_ctx.__exit__(None, None, None)

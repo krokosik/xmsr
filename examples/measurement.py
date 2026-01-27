@@ -48,7 +48,7 @@ class BasicMeasurement(Measurement):
     ]
 
     def measure(self, values, indices, metadata):
-        sleep(0.1)
+        sleep(0.5)
         return np.sin(np.linspace(0, 10, 100)) + np.random.randn(100) * 0.1
 
     def plot_preview(self, data: DataArray):

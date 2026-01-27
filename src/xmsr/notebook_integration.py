@@ -8,7 +8,7 @@ import holoviews as hv
 import hvplot.xarray  # noqa: F401
 import ipywidgets as widgets
 import xarray as xr
-from holoviews.streams import Pipe
+from holoviews.streams import Buffer, Pipe
 from IPython.display import HTML, display
 from tqdm.notebook import tqdm_notebook
 
@@ -119,13 +119,11 @@ def live_plot(measurement: "Measurement") -> Callable[[], None]:
     step_pipe = None
     step_dmap = None
 
-    full_pipe = None
+    full_buffer = None
     full_dmap = None
 
-    to_display = []
-
     def update_plots():
-        nonlocal step_pipe, step_dmap, full_pipe, full_dmap
+        nonlocal step_pipe, step_dmap, full_buffer, full_dmap
 
         step_da = measurement.last_measurement
         if use_step_plot and step_da is not None:
@@ -134,25 +132,26 @@ def live_plot(measurement: "Measurement") -> Callable[[], None]:
                 step_dmap = hv.DynamicMap(
                     measurement.plot_single_step, streams=[step_pipe]
                 )
-                to_display.append(step_dmap)
+                display(step_dmap)
             elif step_da is not None and step_pipe is not None:
                 step_pipe.send(step_da)
 
-        full_da = measurement.result
-        if use_full_plot and full_da is not None:
-            if full_pipe is None:
-                full_pipe = Pipe(data=full_da)
-                full_dmap = hv.DynamicMap(measurement.plot_preview, streams=[full_pipe])
-                to_display.append(full_dmap)
-            elif full_da is not None and full_pipe is not None:
-                full_pipe.send(full_da)
+        full_da = None
+        if step_da is not None:
+            try:
+                full_da = measurement.result
+            except Exception:
+                full_da = None
 
-        if len(to_display) > 0:
-            layout = hv.Layout(to_display).cols(1)
-            if hasattr(measurement, "live_plot_opts"):
-                layout = layout.opts(measurement.live_plot_opts)
-            display(layout)
-            to_display.clear()
+        if use_full_plot and full_da is not None:
+            if full_buffer is None:
+                full_buffer = Pipe(data=full_da)
+                full_dmap = hv.DynamicMap(
+                    measurement.plot_preview, streams=[full_buffer]
+                )
+                display(full_dmap)
+            elif full_da is not None and full_buffer is not None:
+                full_buffer.send(full_da)
 
     return update_plots
 
