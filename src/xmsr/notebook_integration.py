@@ -189,6 +189,9 @@ def live_info(
     def run_update():
         status = measurement.status
 
+        run.disabled = False
+        cancel.disabled = False
+
         if status == MeasurementStatus.PAUSED:
             run.icon = "play"
         elif run.icon != "pause" and status == MeasurementStatus.RUNNING:
