@@ -83,6 +83,7 @@ class Measurement(Thread):
     filename: str
     timestamp: bool = True
     overwrite: bool = False
+    zarr_format: int = 2
     with_coords: bool = True
     target_directory: str = os.getcwd()
 
@@ -94,6 +95,7 @@ class Measurement(Thread):
         filename: Optional[str] = None,
         timestamp: Optional[bool] = None,
         with_coords: Optional[bool] = None,
+        zarr_format: Optional[int] = None,
         metadata: Optional[dict[str, Any]] = None,
         target_directory: Optional[str] = None,
     ):
@@ -103,9 +105,13 @@ class Measurement(Thread):
         self.timestamp = timestamp if timestamp is not None else self.timestamp
         self.overwrite = overwrite if overwrite is not None else self.overwrite
         self.with_coords = with_coords if with_coords is not None else self.with_coords
+        self.zarr_format = zarr_format if zarr_format is not None else self.zarr_format
         self.target_directory = (
             target_directory if target_directory is not None else self.target_directory
         )
+
+        if self.zarr_format not in {2, 3}:
+            raise ValueError("'zarr_format' must be 2 or 3")
 
         self.running = Event()
         self.progress_queue = Queue[ProgressDict]()
@@ -500,6 +506,7 @@ class Measurement(Thread):
             self._to_public_result_type(combined).to_zarr(
                 cast(Any, self._zarr_store()),
                 mode="w",
+                zarr_format=self.zarr_format,
             )
 
         point_coords = {
@@ -523,6 +530,7 @@ class Measurement(Thread):
                 dim: slice(index, index + 1)
                 for dim, index in zip(self._sweep_dims, indices)
             },
+            zarr_format=self.zarr_format,
         )
 
         self.last_measurement = self._to_public_result_type(data)
