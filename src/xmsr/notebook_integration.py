@@ -2,22 +2,25 @@ import logging
 import os.path
 import sys
 from contextlib import contextmanager, suppress
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING, Callable, cast
 
 import holoviews as hv
 import hvplot.xarray  # noqa: F401
 import ipywidgets as widgets
 import xarray as xr
-from holoviews.streams import Buffer, Pipe
+from holoviews.streams import Pipe
 from IPython.display import HTML, display
 from tqdm.notebook import tqdm_notebook
 
-from xmsr.shared import LiveInfoElements, LivePlotElements, MeasurementStatus
+from xmsr.shared import LiveInfoElements, MeasurementStatus
 
 if TYPE_CHECKING:
     from xmsr.measurement import Measurement
 
-hv.notebook_extension("bokeh", logo=False, inline=True)
+try:
+    hv.notebook_extension("bokeh", logo=False, inline=True)
+except Exception:
+    hv.extension("bokeh", logo=False)
 
 # Transparent background for ipywidgets in VSCode Jupyter notebooks
 display(
@@ -175,7 +178,7 @@ def live_info(
         initial=measurement.current_index,
         total=measurement.ntotal,
         display=False,
-        ncols="100%",  # type: ignore[arg-type]
+        ncols=None,
         dynamic_ncols=True,
     )
 
@@ -346,7 +349,7 @@ def _is_console_logging_handler(handler):
 def _get_first_found_console_logging_handler(handlers):
     for handler in handlers:
         if _is_console_logging_handler(handler):
-            return handler
+            return cast(logging.StreamHandler, handler)
 
 
 @contextmanager
