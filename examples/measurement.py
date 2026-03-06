@@ -2,30 +2,15 @@
 """
 # Measurement
 
-This tutorial presents the `Measurement` class, which is the base class for all
-classes that perform parametric measurements. Among its capabilities are:
-- automatic scanning of all parameters
-- automatic saving and chunking of data to Zarr archives with metadata
-- possiblity to run a non blocking measurement in a thread
-- pausing and aborting the measurement in non-blocking mode
-- resuming measurements from an existing archive
-- labelleing of data with dimensions and coordinates, handled by xarray (see xarray tutorial)
-- ability to run in GUI mode!
+This tutorial presents the `Measurement` class for parametric scans defined in
+native xarray templates.
 
-## Basic usage
+You define two schemas:
+- `sweep_template` - sweep dimensions and coordinates
+- `result_template` - payload returned by each `measure` call
 
-Import the `Measurement` class and create a subclass. The subclass must implement
-the `measure` method, which takes 3 dictionaries as arguments:
-- `indices` - a dictionary of indices of the parameters to be measured
-- `values` - a dictionary of values of the parameters to be measured
-- `metadata` - a dictionary of metadata, which can be mutated to add some information
-
-The `measure` method should return a numpy array with the measured data. You also
-have to specify the `param_coords` dictionary, which specifies the parameters
-and their respective values.
-
-Calling `run` calls the `measure` method for all combinations of parameters in blocking mode.
-The `result` attribute fetches the xarray DataArray with the measured data.
+The framework iterates all sweep points, stores to Zarr, supports pause/resume,
+and exposes the full labeled xarray result.
 """
 
 # %%
@@ -33,6 +18,7 @@ from time import sleep
 from typing import Any
 
 import numpy as np
+import xarray as xr
 from xarray import DataArray, Dataset
 
 from xmsr import Measurement
@@ -40,18 +26,27 @@ from xmsr import Measurement
 
 class BasicMeasurement(Measurement):
     target_directory = "tmp"
-    param_coords = dict(
-        x=list(range(15)), y=[(12, 13), (14, 15)]
-    )  # param coordinates can be 2D
-    variables = [
-        Measurement.Var("noisy-wave", ["time"], {"time": np.linspace(0, 10, 100)})
-    ]
+
+    sweep_template = (
+        xr.Dataset()
+        .assign_coords(x=np.arange(15), y=np.array([12, 14]))
+        .assign_coords(power=("x", np.arange(15) ** 2))
+    )
+
+    result_template = xr.DataArray(
+        np.empty((100,), dtype=np.float64),
+        dims=("time",),
+        coords={"time": np.linspace(0, 10, 100)},
+        name="noisy_wave",
+    )
 
     def measure(self, values, indices, metadata):
-        sleep(0.5)
+        sleep(0.1)
         return np.sin(np.linspace(0, 10, 100)) + np.random.randn(100) * 0.1
 
-    def plot_preview(self, data: DataArray):
+    def plot_preview(self, data: DataArray | Dataset):
+        if isinstance(data, Dataset):
+            data = data["noisy_wave"]
         return data.mean(dim=["x", "y"]).hvplot()
 
     def plot_single_step(self, data: DataArray | Dataset):
@@ -60,14 +55,14 @@ class BasicMeasurement(Measurement):
 
 bm = BasicMeasurement()
 bm
+
 # %% [markdown]
 """
 ## Non-blocking mode
 
-The `Measurement` class is a subclass of `QThread` so it can be run in a separate thread.
-This is useful when the measurement takes a long time and you want to be able to pause it
-or abort it, as well as when you want to have the IPython console available during the measurement.
+`Measurement` inherits from a thread abstraction, so it can run in background.
 """
+
 # %%
 measurement2 = BasicMeasurement()
 measurement2.start()
@@ -75,56 +70,49 @@ print("Measurement is running in a separate thread!")
 sleep(0.2)
 measurement2.running.clear()
 print("Measurement is paused!")
-sleep(5)
+sleep(1)
 print("Resuming measurement...")
-sleep(0.1)
 measurement2.running.set()
 measurement2.finished.wait()
 measurement2.result
+
 # %% [markdown]
 """
 ## Configuring the measurement
 
-The `Measurement` class has a number of attributes that can be configured to change its behaviour.
-- `data_dims` - a list of dimensions of the measured data
-- `data_coords` - a dictionary of coordinates of the measured data
-- `metadata` - a dictionary of metadata that will be saved to the archive
-- `target_directory` - the directory where the archive will be saved
-- `filename` - the name of the archive
-- `timestamp` - whether to add a timestamp to the filename
-- `with_coords` - whether to add coordinates to the filename
-- `overwrite` - whether to overwrite the archive if it already exists
-
-Additionally, you may overwrite the `prepare` and `finish` methods to perform some actions
-before and after the measurement, respectively.
-
-You can also subclass existing measurements if you want to reuse some of their functionality,
-for example `measure` methods.
+Configuration attributes include:
+- `metadata`
+- `target_directory`
+- `filename`
+- `timestamp`
+- `with_coords`
+- `overwrite`
 """
-# %%
 
 
 class ConfiguredMeasurement(BasicMeasurement):
-    variables = [
-        Measurement.Var("my-variable", ["z", "t"], {"t": range(10), "z": range(10)})
-    ]
-    # data_dims = ["z", "t"]
-    # data_coords = dict(z=list(range(10)), t=list(range(10)))
-    metadata = dict(measurement="test")
+    result_template = xr.DataArray(
+        np.empty((10, 10), dtype=np.float64),
+        dims=("z", "t"),
+        coords={"z": np.arange(10), "t": np.arange(10)},
+        name="my_variable",
+    )
+
+    metadata = {"measurement": "test"}
     timestamp = False
     with_coords = False
     filename = "my-measurement"
     overwrite = True
 
     def prepare(self, metadata: dict[str, Any]):
-        self.metadata.update({"prepared": True})
+        metadata.update({"prepared": True})
 
     def measure(self, values, indices, metadata):
         metadata.update({"measured": True})
-        return super().measure(values, indices, metadata)
+        return np.random.randn(10, 10)
 
     def finish(self, metadata: dict[str, Any]):
-        self.metadata.update({"finished": True})
+        metadata.update({"finished": True})
 
 
 measurement3 = ConfiguredMeasurement()
@@ -133,46 +121,32 @@ measurement3.result
 
 # %% [markdown]
 """
-Class attributes are not the only way to specify configurations. They serve as defaults, but
-you can also specify them in the constructor, as shown below. We also set `overwrite` to `False`
-to demonstrate that the measurement will resume from the existing archive. Note that there
-is no timestamp so the filename stays the same.
-"""
-# %%
-measurement4 = ConfiguredMeasurement()
-measurement4.start()
-sleep(0.5)
-measurement4.finished.set()
-print("Measurement stopped!")
-sleep(1)
-print("Creating new measurement...")
-measurement4 = ConfiguredMeasurement(overwrite=False)
-measurement4.start()
-measurement4.finished.wait()
-measurement4.result
+## Multi-variable measurements
 
-# %% [markdown]
-"""
-Multi variable measurements are also supported. Just return a tuple of numpy arrays
-from the `measure` method and define the `variables` attribute as a list of `Variable`
-instances.
+Return tuples from `measure` to auto-wrap into `result_template` dataset variables.
 """
 
 
 class MultiMeasurement(Measurement):
     target_directory = "tmp"
-    param_coords = dict(
-        x=list(range(5)), y=[(12, 13), (14, 15)]
-    )  # param coordinates can be 2D
-    variables = [
-        Measurement.Var("var1"),  # coordinates are optional
-        Measurement.Var("var2", ["c"], {"c": range(10)}),
-        Measurement.Var("var3", [], {}),
-    ]
+    sweep_template = xr.Dataset().assign_coords(
+        x=np.arange(5),
+        y=np.arange(10),
+    )
+
+    result_template = xr.Dataset(
+        {
+            "var1": xr.DataArray(np.empty((10, 10)), dims=("row", "col")),
+            "var2": xr.DataArray(
+                np.empty((10,)), dims=("c",), coords={"c": np.arange(10)}
+            ),
+            "var3": xr.DataArray(np.empty(()), dims=()),
+        }
+    )
 
     def measure(self, values, indices, metadata):
-        sleep(0.1)
-        return np.random.randint(10, size=(10, 10)), np.random.randn(10), np.array(0)
+        sleep(0.05)
+        return np.random.randint(10, size=(10, 10)), np.random.randn(10), np.array(0.0)
 
 
 multi_measurement = MultiMeasurement()

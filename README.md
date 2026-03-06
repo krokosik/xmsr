@@ -1,168 +1,157 @@
 # xmsr - Xarray Measurement Wrapper
 
-A convenient Python class for running parametric measurements and storing data using a chunked and compressed binary format (Zarr). This wrapper combines high-level APIs for convenient parameter sweep measurements with minimal verbosity and maximum reusability.
+A Python framework for running parametric measurements and storing results in Zarr using xarray-native schemas.
 
 ## Overview
 
-The `Measurement` class is designed to simplify the process of running multi-dimensional parameter sweeps in experimental physics and other scientific domains. Built on top of **xarray**, it leverages xarray's fantastic declarative syntax and semantics to embed experiment information directly into the data, creating self-documenting datasets with labeled dimensions, coordinates, and metadata.
+`Measurement` is designed for multi-dimensional parameter sweeps where metadata, dimensions, and coordinates are first-class parts of the dataset.
 
-Its main use is focused on workflows incorporating scripts and interactive Python sessions, but can also acommodate other GUIs like `Qt`.
+You define two xarray templates:
 
-Key capabilities:
+- `sweep_template`: scan dimensions and sweep coordinates
+- `result_template`: per-point measurement payload schema
 
-- **Automatic parameter scanning** - Define parameter ranges and let the class handle the sweep
-- **Efficient data storage** - Uses Zarr for chunked, compressed binary storage
-- **Non-blocking execution** - Run measurements in a separate thread with pause/resume capabilities
-- **Declarative data labeling** - Leverage xarray's powerful semantics to embed dimensions, coordinates, and metadata directly into your datasets
-- **Resume capability** - Continue interrupted measurements from existing archives
-- **GUI integration** - informative IPython widgets with run/pause/cancel interactions, progress bar and logging
-- **(WIP) Live plotting** - ability to define custom plots showcasing the measured chunk and the collected data
-- **(Planned) Multi run management** - repeated runs of the same measurement can easily become overwhelming. Merging datasets from filesystems is also a nuisance, so solutions like `xarray DataTree` will be explored for a single hierarchical structure per measurement. 
+The framework handles iteration, storage, resume, and optional interactive controls.
 
-## Design Goals
+## Template Contract
 
-- **Minimize API verbosity** - Simple, intuitive interface for common measurement tasks
-- **Maximize reusability** - Write measurement scripts once, reuse with different parameters
-- **Integrate well with Interactive Python (IPython)** - Designed for notebook workflows and interactive exploration
-- **Embed experiment info in data** - Use xarray's declarative approach to create self-documenting datasets where parameters, dimensions, and metadata are integral parts of the data structure
+- `sweep_template` must be an `xr.Dataset`/`xr.DataArray` with at least one dimension.
+- `result_template` defines the per-point payload schema:
+  - `xr.DataArray`: single-variable output
+  - `xr.Dataset`: multi-variable output
+- `measure(values, indices, metadata)` is called once per sweep point.
+
+Auto-wrap behavior:
+
+- If `result_template` is `DataArray`, you may return a single numpy array/scalar.
+- If `result_template` is `Dataset`, you may return a tuple mapped by variable order in
+  `result_template.data_vars`.
+- Returned shapes must exactly match template variable shapes.
 
 ## Features
 
-### Parameter Sweeps
+- Automatic parameter scanning over sweep coordinates
+- Zarr-backed storage with resume support
+- Non-blocking execution in a background thread
+- Xarray-native data model (no custom coord serialization layer)
+- IPython widget integration for status/progress and optional live plotting
 
-Define multi-dimensional parameter sweeps with simple dictionary syntax:
+## Basic Example
 
 ```python
-from xmsr import Measurement
 import numpy as np
+import xarray as xr
+
+from xmsr import Measurement
+
 
 class BasicMeasurement(Measurement):
     target_directory = "data"
-    param_coords = dict(
-        x=list(range(5)), 
-        y=[(12, 13), (14, 15)]
+
+    sweep_template = xr.Dataset().assign_coords(
+        gate=np.linspace(-1.0, 1.0, 21),
+        bias=np.linspace(-0.2, 0.2, 31),
+        power=("gate", np.linspace(-1.0, 1.0, 21) ** 2),
     )
-    
+
+    result_template = xr.DataArray(
+        np.empty((256,), dtype=np.float32),
+        dims=("freq",),
+        coords={"freq": np.linspace(1e6, 10e6, 256)},
+        name="amplitude",
+    )
+
     def measure(self, values, indices, metadata):
-        # Your measurement code here
-        return np.random.randint(10, size=(10, 10))
+        # values: {'gate': ..., 'bias': ...}
+        # indices: {'gate': ..., 'bias': ...}
+        return np.random.randn(256).astype(np.float32)
+
 
 measurement = BasicMeasurement()
 measurement.run()
-result = measurement.result  # Returns xarray DataArray
-```
-
-### Non-Blocking Execution
-
-Run measurements in a separate thread with full control:
-
-```python
-measurement = BasicMeasurement()
-measurement.start()  # Runs in background
-
-# Pause the measurement
-measurement.running.clear()
-
-# Resume the measurement
-measurement.running.set()
-
-# Wait for completion
-measurement.finished.wait()
 result = measurement.result
 ```
 
-### Multi-Variable Measurements
+## Composite Sweep Parameters
 
-Measure multiple quantities simultaneously:
+For composite coordinates, prefer MultiIndex or derived coordinates over tuple/object arrays.
 
 ```python
+import pandas as pd
+import xarray as xr
+
+y_pairs = pd.MultiIndex.from_tuples([(12, 13), (14, 15)], names=["y_a", "y_b"])
+
+sweep_template = xr.Dataset().assign_coords(
+    x=[0, 1, 2],
+    y_pair=("y_pair", y_pairs),
+)
+```
+
+## Multi-Variable Example
+
+```python
+import numpy as np
+import xarray as xr
+
 from xmsr import Measurement
 
+
 class MultiMeasurement(Measurement):
-    target_directory = "data"
-    param_coords = dict(x=range(5), y=range(10))
-    
-    variables = [
-        Measurement.Var("voltage", ["time"], {"time": range(100)}),
-        Measurement.Var("current", ["time"], {"time": range(100)}),
-        Measurement.Var("resistance"),  # Scalar variable
-    ]
-    
+    sweep_template = xr.Dataset().assign_coords(
+        temperature=np.array([4.2, 10.0, 20.0]),
+        field=np.linspace(-2.0, 2.0, 101),
+    )
+
+    result_template = xr.Dataset(
+        {
+            "voltage": xr.DataArray(
+                np.empty((500,), dtype=np.float64),
+                dims=("time",),
+                coords={"time": np.linspace(0, 1, 500)},
+            ),
+            "current": xr.DataArray(
+                np.empty((500,), dtype=np.float64),
+                dims=("time",),
+                coords={"time": np.linspace(0, 1, 500)},
+            ),
+            "resistance": xr.DataArray(np.empty((), dtype=np.float64), dims=()),
+        }
+    )
+
     def measure(self, values, indices, metadata):
-        voltage = np.random.randn(100)
-        current = np.random.randn(100)
-        resistance = voltage.mean() / current.mean()
+        voltage = np.random.randn(500)
+        current = np.random.randn(500)
+        resistance = float(voltage.mean() / (current.mean() + 1e-12))
         return voltage, current, resistance
 ```
 
-### Configuration Options
+## Configuration
 
-Customize measurement behavior via class attributes or constructor arguments:
+Runtime behavior can be configured via class attributes or constructor args:
 
-- `data_dims` - Dimensions of measured data
-- `data_coords` - Coordinates for measured data
-- `metadata` - Additional metadata saved with the archive
-- `target_directory` - Output directory for Zarr archives
-- `filename` - Custom archive filename
-- `timestamp` - Add timestamp to filename (default: True)
-- `with_coords` - Include coordinates in filename (default: True)
-- `overwrite` - Overwrite existing archives (default: False)
+- `metadata`
+- `target_directory`
+- `filename`
+- `timestamp` (default: `True`)
+- `with_coords` (default: `True`)
+- `overwrite` (default: `False`)
 
-```python
-class ConfiguredMeasurement(BasicMeasurement):
-    metadata = dict(experiment="demo", sample="A1")
-    timestamp = False
-    with_coords = False
-    filename = "my-measurement"
-    overwrite = True
-    
-    def prepare(self, metadata):
-        # Called before measurement starts
-        metadata.update({"prepared": True})
-    
-    def finish(self, metadata):
-        # Called after measurement completes
-        metadata.update({"finished": True})
+## Running Tests
+
+```bash
+uv run python -m pytest tests/test_measurement_templates.py
 ```
 
-### Resume Measurements
-
-Continue interrupted measurements from existing archives:
+## Non-Blocking Execution
 
 ```python
-# Start a measurement
-measurement = ConfiguredMeasurement()
+measurement = BasicMeasurement()
 measurement.start()
-# ... measurement gets interrupted ...
-measurement.finished.set()  # Stop it
 
-# Resume from the same archive
-measurement = ConfiguredMeasurement(overwrite=False)
-measurement.start()
+measurement.running.clear()  # pause
+measurement.running.set()    # resume
+
 measurement.finished.wait()
+result = measurement.result
 ```
-
-## Current Limitations
-
-The class currently supports:
-- Blocking execution via `run()`
-- Simple non-blocking execution via `start()`
-
-
-## Roadmap
-
-Planned features for future releases:
-
-- **Enhanced GUI** 
-  - Live preview plot of current chunk
-  - Partial plot of the entire sweep
-  - file destination select UI
-  - multi measurement UI
-  - ability to *go back in time*
-  
-- **Parameter Ordering Optimization**
-  - Smart ordering for multidimensional sweeps
-  - Minimize jumps in slowly varying parameters
-  - Optimize measurement efficiency for specific hardware constraints
-
-- **Suggestions?** - open an issue!
