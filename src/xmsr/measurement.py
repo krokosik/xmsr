@@ -1,5 +1,4 @@
 import contextlib
-import json
 import logging
 import os
 import shutil
@@ -17,7 +16,6 @@ import numpy as np
 import numpy.typing as npt
 import xarray as xr
 import zarr
-from zarr.storage import DirectoryStore
 
 from xmsr.notebook_integration import live_info, live_plot, logging_redirect_ipywidgets
 from xmsr.qt_integration import Thread
@@ -437,6 +435,9 @@ class Measurement(Thread):
             return ds[self._result_var_name]
         return ds
 
+    def _zarr_store(self) -> str:
+        return str(self._path)
+
     def _coerce_measurement_output(
         self, value: xr.DataArray | xr.Dataset | Any
     ) -> xr.Dataset:
@@ -497,7 +498,7 @@ class Measurement(Thread):
         if not self._path.exists():
             combined = self._combine_sweep_and_result_templates()
             self._to_public_result_type(combined).to_zarr(
-                DirectoryStore(str(self._path)),
+                cast(Any, self._zarr_store()),
                 mode="w",
             )
 
@@ -517,7 +518,7 @@ class Measurement(Thread):
             expanded = expanded.drop_vars(non_region_coord_vars)
 
         self._to_public_result_type(expanded).to_zarr(
-            DirectoryStore(str(self._path)),
+            cast(Any, self._zarr_store()),
             region={
                 dim: slice(index, index + 1)
                 for dim, index in zip(self._sweep_dims, indices)
@@ -557,25 +558,8 @@ class Measurement(Thread):
 
         var_name = self._result_var_name
         try:
-            z = zarr.open_group(self._path, mode="a")
+            z = zarr.open_group(self._zarr_store(), mode="a")
             z[var_name].attrs.update(self.metadata)
-        except Exception:
-            return
-
-        zmeta_path = self._path / ".zmetadata"
-        if not zmeta_path.exists():
-            return
-
-        try:
-            with open(zmeta_path, "r") as f:
-                data = json.load(f)
-                meta = data.get("metadata", {})
-                key = f"{var_name}/.zattrs"
-                if key in meta:
-                    meta[key].update(self.metadata)
-
-            with open(zmeta_path, "w") as f:
-                json.dump(data, f)
         except Exception:
             return
 
