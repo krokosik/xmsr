@@ -36,6 +36,16 @@ Auto-wrap behavior:
 - Xarray-native data model (no custom coord serialization layer)
 - IPython widget integration for status/progress and optional live plotting
 
+## Examples
+
+- `examples/01_single_variable.py`
+- `examples/02_multi_variable.py`
+- `examples/03_paths_and_metadata.py`
+- `examples/04_multiparam_multiindex.py`
+- `examples/05_multiparam_derived_coords.py`
+- `examples/06_live_plotting.py`
+- `examples/07_manual_operator_step.py`
+
 ## Basic Example
 
 ```python
