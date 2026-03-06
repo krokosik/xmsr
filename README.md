@@ -136,6 +136,17 @@ Runtime behavior can be configured via class attributes or constructor args:
 - `timestamp` (default: `True`)
 - `with_coords` (default: `True`)
 - `overwrite` (default: `False`)
+- `zarr_format` (default: `2`, accepts `2` or `3`)
+
+### Zarr v3 Migration Notes
+
+- `zarr_format=3` is supported by the measurement API.
+- In environments still running `zarr<3`, xmsr raises a clear error unless
+  `ZARR_V3_EXPERIMENTAL_API=1` is set.
+- Recommended migration flow:
+  1. Keep default `zarr_format=2` in production runs.
+  2. Enable dedicated CI/dev jobs with `zarr>=3` and run tests with `zarr_format=3`.
+  3. Flip the default to `zarr_format=3` after validation.
 
 ## Running Tests
 
