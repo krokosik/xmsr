@@ -112,6 +112,14 @@ class Measurement(Thread):
 
         if self.zarr_format not in {2, 3}:
             raise ValueError("'zarr_format' must be 2 or 3")
+        if (
+            self.zarr_format == 3
+            and int(zarr.__version__.split(".")[0]) < 3
+            and os.environ.get("ZARR_V3_EXPERIMENTAL_API") != "1"
+        ):
+            raise ValueError(
+                "zarr format 3 requires ZARR_V3_EXPERIMENTAL_API=1 with zarr<3"
+            )
 
         self.running = Event()
         self.progress_queue = Queue[ProgressDict]()

@@ -3,7 +3,9 @@ import tempfile
 from pathlib import Path
 
 import numpy as np
+import pytest  # type: ignore[reportMissingImports]
 import xarray as xr
+import zarr
 
 from xmsr import Measurement
 
@@ -106,8 +108,16 @@ def _cleanup(measurement: Measurement):
         shutil.rmtree(Path(measurement._path), ignore_errors=True)
 
 
-def test_dataset_template_autowrap_tuple_writes_expected_shapes():
-    m = _DatasetAutoWrapMeasurement(overwrite=True)
+def _supports_zarr_v3() -> bool:
+    major = int(zarr.__version__.split(".")[0])
+    return major >= 3
+
+
+@pytest.mark.parametrize("zarr_format", [2, 3])
+def test_dataset_template_autowrap_tuple_writes_expected_shapes(zarr_format: int):
+    if zarr_format == 3 and not _supports_zarr_v3():
+        pytest.skip("zarr format 3 tests require zarr>=3 in this environment")
+    m = _DatasetAutoWrapMeasurement(overwrite=True, zarr_format=zarr_format)
     try:
         _run_blocking(m)
         result = m.result
@@ -119,8 +129,11 @@ def test_dataset_template_autowrap_tuple_writes_expected_shapes():
         _cleanup(m)
 
 
-def test_dataarray_template_autowrap_array_returns_dataarray():
-    m = _DataArrayAutoWrapMeasurement(overwrite=True)
+@pytest.mark.parametrize("zarr_format", [2, 3])
+def test_dataarray_template_autowrap_array_returns_dataarray(zarr_format: int):
+    if zarr_format == 3 and not _supports_zarr_v3():
+        pytest.skip("zarr format 3 tests require zarr>=3 in this environment")
+    m = _DataArrayAutoWrapMeasurement(overwrite=True, zarr_format=zarr_format)
     try:
         _run_blocking(m)
         result = m.result
@@ -131,8 +144,11 @@ def test_dataarray_template_autowrap_array_returns_dataarray():
         _cleanup(m)
 
 
-def test_autowrap_shape_mismatch_raises_value_error():
-    m = _WrongShapeMeasurement(overwrite=True)
+@pytest.mark.parametrize("zarr_format", [2, 3])
+def test_autowrap_shape_mismatch_raises_value_error(zarr_format: int):
+    if zarr_format == 3 and not _supports_zarr_v3():
+        pytest.skip("zarr format 3 tests require zarr>=3 in this environment")
+    m = _WrongShapeMeasurement(overwrite=True, zarr_format=zarr_format)
     try:
         m.started.set()
         try:
