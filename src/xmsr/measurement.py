@@ -83,7 +83,7 @@ class Measurement(Thread):
     filename: str
     timestamp: bool = True
     overwrite: bool = False
-    zarr_format: int = 2
+    zarr_format: int = 3
     with_coords: bool = True
     target_directory: str = os.getcwd()
 
