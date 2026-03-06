@@ -216,9 +216,10 @@ class Measurement(Thread):
         self.LOG.debug(f"Full path:\n{os.path.abspath(self._path)}")
 
         try:
-            self.current_index = int(
-                zarr.open(str(self._path), mode="r").attrs[_CURRENT_INDEX_KEY]
-            )
+            current_index_attr = zarr.open(str(self._path), mode="r").attrs[
+                _CURRENT_INDEX_KEY
+            ]
+            self.current_index = int(cast(Any, current_index_attr))
             self.LOG.debug(
                 f"Found existing data with {self.current_index} measurements, resuming..."
             )
@@ -394,6 +395,23 @@ class Measurement(Thread):
             if not self.started.is_set():
                 self.started.set()
         self._ui_update()
+
+    def wait_for_manual_resume(
+        self, message: str, *, clear_running: bool = True
+    ) -> None:
+        """Pause the measurement and wait for explicit user resume.
+
+        This helper is useful when a parameter must be adjusted manually between
+        automated measurement steps.
+
+        Args:
+            message: Instruction shown to the operator before pausing.
+            clear_running: Whether to force pause before waiting.
+        """
+        self.LOG.info(message)
+        if clear_running:
+            self.running.clear()
+        self._wait_on(self.running)
 
     def cancel(self) -> None:
         self.cancelled.set()
