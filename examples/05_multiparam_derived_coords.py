@@ -48,5 +48,4 @@ class DerivedCoordsSweepMeasurement(Measurement):
 
 
 measurement = DerivedCoordsSweepMeasurement()
-measurement.run()
-measurement.result
+measurement

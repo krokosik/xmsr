@@ -48,5 +48,4 @@ class MultiIndexSweepMeasurement(Measurement):
 
 
 measurement = MultiIndexSweepMeasurement()
-measurement.run()
-measurement.result
+measurement
