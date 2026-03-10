@@ -176,23 +176,14 @@ class Measurement(Thread):
     def measure(
         self,
         values: dict[str, Any],
-        indices: dict[str, int],
+        indices: dict[str, int | tuple[int, ...]],
         metadata: dict[str, Any],
-    ) -> (
-        xr.DataArray
-        | xr.Dataset
-        | np.ndarray
-        | tuple[np.ndarray | npt.ArrayLike | float | int | bool, ...]
-        | npt.ArrayLike
-        | float
-        | int
-        | bool
-    ):
+    ) -> npt.ArrayLike | tuple[npt.ArrayLike, ...]:
         """Measure one sweep point.
 
         Args:
             values: Coordinate values for current sweep indices.
-            indices: Integer indices along sweep dimensions.
+            indices: Integer indices for sweep dimensions and derived coordinates.
             metadata: Mutable run metadata persisted with the result.
 
         Returns:
@@ -247,27 +238,60 @@ class Measurement(Thread):
     def _linear_index_for_indices_tuple(self, indices: tuple[int, ...]) -> int:
         return int(np.ravel_multi_index(indices, self._sweep_sizes))
 
-    def _values_for_indices_tuple(self, indices: tuple[int, ...]) -> dict[str, Any]:
+    def _coord_value_for_indices(
+        self, coord: xr.DataArray, indices_by_dim: dict[str, int]
+    ) -> Any:
+        coord_dims = tuple(str(dim) for dim in coord.dims)
+        indexers = {
+            dim: indices_by_dim[dim] for dim in coord_dims if dim in indices_by_dim
+        }
+        selected = coord.isel(indexers) if indexers else coord
+        value = np.asarray(selected.values)
+        if value.ndim == 0:
+            return value.item()
+        return selected.values
+
+    def _values_and_indices_for_indices_tuple(
+        self, indices: tuple[int, ...]
+    ) -> tuple[dict[str, Any], dict[str, int | tuple[int, ...]]]:
+        indices_by_dim = dict(zip(self._sweep_dims, indices))
+
         values: dict[str, Any] = {}
-        for dim, index in zip(self._sweep_dims, indices):
+        indices_dict: dict[str, int | tuple[int, ...]] = {
+            dim: index for dim, index in indices_by_dim.items()
+        }
+
+        for dim, index in indices_by_dim.items():
             coord = self._sweep.coords.get(dim)
             if coord is None:
                 values[dim] = index
             else:
-                values[dim] = (
-                    coord.values[index].item()
-                    if np.asarray(coord.values[index]).ndim == 0
-                    else coord.values[index]
-                )
-        return values
+                values[dim] = self._coord_value_for_indices(coord, indices_by_dim)
+
+        for coord_name, coord in self._sweep.coords.items():
+            name = str(coord_name)
+            if name in values:
+                continue
+
+            coord_dims = tuple(str(dim) for dim in coord.dims)
+            if not coord_dims or any(dim not in indices_by_dim for dim in coord_dims):
+                continue
+
+            values[name] = self._coord_value_for_indices(coord, indices_by_dim)
+
+            if len(coord_dims) == 1:
+                indices_dict[name] = indices_by_dim[coord_dims[0]]
+            else:
+                indices_dict[name] = tuple(indices_by_dim[dim] for dim in coord_dims)
+
+        return values, indices_dict
 
     def step(self, idx: int | None = None):
         if idx is None:
             idx = self.current_index
 
         indices_tuple = self._indices_tuple_for_linear_index(idx)
-        indices = dict(zip(self._sweep_dims, indices_tuple))
-        values = self._values_for_indices_tuple(indices_tuple)
+        values, indices = self._values_and_indices_for_indices_tuple(indices_tuple)
 
         self.LOG.debug(
             f"Measurement no. {idx} indices: {indices_tuple} values: {tuple(values.values())}"
@@ -361,7 +385,8 @@ class Measurement(Thread):
     @property
     def current_point(self) -> tuple[tuple[int, ...], dict[str, Any]]:
         indices_tuple = self._indices_tuple_for_linear_index(self.current_index)
-        return indices_tuple, self._values_for_indices_tuple(indices_tuple)
+        values, _ = self._values_and_indices_for_indices_tuple(indices_tuple)
+        return indices_tuple, values
 
     @property
     def ntotal(self) -> int:
@@ -460,7 +485,25 @@ class Measurement(Thread):
         )
         merged = merged.assign_attrs(dict(self.metadata))
 
-        return merged
+        return self._apply_derived_xindexes(merged)
+
+    def _apply_derived_xindexes(self, data: xr.Dataset) -> xr.Dataset:
+        sweep_dims = set(self._sweep_dims)
+        derived_coords = [
+            str(name)
+            for name, coord in data.coords.items()
+            if str(name) not in data.dims
+            and coord.dims
+            and set(str(dim) for dim in coord.dims).issubset(sweep_dims)
+        ]
+        for coord_name in derived_coords:
+            if coord_name in data.xindexes:
+                continue
+            try:
+                data = data.set_xindex(coord_name)
+            except Exception:
+                self.LOG.debug(f"Skipping xindex creation for coord '{coord_name}'")
+        return data
 
     def _to_public_result_type(self, ds: xr.Dataset) -> xr.Dataset | xr.DataArray:
         if self._result_is_dataarray:
@@ -577,7 +620,7 @@ class Measurement(Thread):
             self.LOG.error("Measurement not started yet")
             return xr.Dataset()
 
-        ds = xr.open_dataset(self._path, engine="zarr")
+        ds = self._apply_derived_xindexes(xr.open_dataset(self._path, engine="zarr"))
         selected = ds.isel(dict(zip(self._sweep_dims, indices)))
         return self._to_public_result_type(selected)
 
@@ -599,7 +642,7 @@ class Measurement(Thread):
 
     @property
     def result(self) -> xr.DataArray | xr.Dataset:
-        ds = xr.open_dataset(self._path, engine="zarr")
+        ds = self._apply_derived_xindexes(xr.open_dataset(self._path, engine="zarr"))
         return self._to_public_result_type(ds)
 
     def plot_result(self, *args, **kwargs):

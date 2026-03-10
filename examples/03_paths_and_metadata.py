@@ -20,7 +20,7 @@ class MetadataLifecycleMeasurement(Measurement):
     filename = "manual-filepath"
     timestamp = False
     with_coords = False
-    overwrite = True
+    overwrite = False
     metadata = {"operator": "demo", "setup": "lab-bench-1"}
 
     sweep_template = xr.Dataset().assign_coords(step=np.arange(6))
@@ -47,8 +47,10 @@ class MetadataLifecycleMeasurement(Measurement):
 
 
 measurement = MetadataLifecycleMeasurement()
-measurement.run()
-
+measurement
+# %%
 print("Stored in:", measurement._path)
 print("Metadata:", measurement.metadata)
 measurement.result
+
+# %%

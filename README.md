@@ -41,8 +41,7 @@ Auto-wrap behavior:
 - `examples/01_single_variable.py`
 - `examples/02_multi_variable.py`
 - `examples/03_paths_and_metadata.py`
-- `examples/04_multiparam_multiindex.py`
-- `examples/05_multiparam_derived_coords.py`
+- `examples/04_multiparam_derived_coords.py`
 - `examples/06_live_plotting.py`
 - `examples/07_manual_operator_step.py`
 
@@ -84,17 +83,17 @@ result = measurement.result
 
 ## Composite Sweep Parameters
 
-For composite coordinates, prefer MultiIndex or derived coordinates over tuple/object arrays.
+For composite parameters, prefer scalar sweep dimensions with derived coordinates.
 
 ```python
-import pandas as pd
+import numpy as np
 import xarray as xr
 
-y_pairs = pd.MultiIndex.from_tuples([(12, 13), (14, 15)], names=["y_a", "y_b"])
+x = np.linspace(0.0, 2.0, 6)
 
-sweep_template = xr.Dataset().assign_coords(
-    x=[0, 1, 2],
-    y_pair=("y_pair", y_pairs),
+sweep_template = xr.Dataset().assign_coords(x=x).assign_coords(
+    x_gain=("x", 2.0 * x + 1.0),
+    x_offset=("x", np.sin(x)),
 )
 ```
 

@@ -7,6 +7,7 @@ Shows a single-variable measurement using `xr.DataArray` as `result_template`.
 
 # %%
 from pathlib import Path
+from time import sleep
 
 import numpy as np
 import xarray as xr
@@ -44,11 +45,11 @@ class SingleVariableMeasurement(Measurement):
         frequency = self.result_template.coords["frequency"].values
         phase = float(values["gate"]) * np.pi + 0.2 * int(indices["bias"])
         envelope = 1.0 + 0.1 * float(values["bias"])
+        sleep(0.1)
         return (
             envelope * np.sin(2 * np.pi * frequency / frequency.max() + phase)
         ).astype(np.float32)
 
 
 measurement = SingleVariableMeasurement()
-measurement.run()
-measurement.result
+measurement

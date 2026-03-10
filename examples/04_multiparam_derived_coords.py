@@ -1,12 +1,13 @@
 # %% [markdown]
 """
-# Multi-Parameter Coordinates (Derived Coordinates)
+# Multi-Parameter Coordinates
 
 Shows multiparam behavior via scalar base coordinate plus derived coordinates.
 """
 
 # %%
 from pathlib import Path
+from typing import cast
 
 import numpy as np
 import xarray as xr
@@ -40,9 +41,10 @@ class DerivedCoordsSweepMeasurement(Measurement):
     )
 
     def measure(self, values, indices, metadata):
-        x_index = int(indices["x"])
-        gain = float(self._sweep.coords["x_gain"].values[x_index])
-        offset = float(self._sweep.coords["x_offset"].values[x_index])
+        gain = float(values["x_gain"])
+        offset = float(values["x_offset"])
+        metadata["last_x_index"] = int(cast(int, indices["x"]))
+        metadata["last_x_gain_index"] = int(cast(int, indices["x_gain"]))
         sample = np.arange(60)
         return gain * np.exp(-sample / 40.0) + offset
 

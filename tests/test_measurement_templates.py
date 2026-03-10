@@ -159,3 +159,47 @@ def test_autowrap_shape_mismatch_raises_value_error(zarr_format: int):
         assert raised
     finally:
         _cleanup(m)
+
+
+class _DerivedCoordsExposureMeasurement(_NoUiMixin, Measurement):
+    target_directory = tempfile.gettempdir()
+    filename = "xmsr_test_derived_coords"
+    overwrite = True
+    timestamp = False
+    with_coords = False
+
+    x = np.arange(2)
+    sweep_template = (
+        xr.Dataset()
+        .assign_coords(x=x)
+        .assign_coords(
+            x_gain=("x", 2 * x + 1),
+            x_offset=("x", x - 3),
+        )
+    )
+    result_template = xr.DataArray(
+        np.empty((2,), dtype=np.float32), dims=("f",), name="signal"
+    )
+
+    def measure(self, values, indices, metadata):
+        metadata["seen_x_gain"] = values["x_gain"]
+        metadata["seen_x_offset"] = values["x_offset"]
+        metadata["seen_x_gain_index"] = indices["x_gain"]
+        return np.array([1.0, 2.0], dtype=np.float32)
+
+
+@pytest.mark.parametrize("zarr_format", [2, 3])
+def test_derived_coords_exposed_in_values_and_indices(zarr_format: int):
+    if zarr_format == 3 and not _supports_zarr_v3():
+        pytest.skip("zarr format 3 tests require zarr>=3 in this environment")
+    m = _DerivedCoordsExposureMeasurement(overwrite=True, zarr_format=zarr_format)
+    try:
+        _run_blocking(m)
+        assert m.metadata["seen_x_gain"] == 3
+        assert m.metadata["seen_x_offset"] == -2
+        assert m.metadata["seen_x_gain_index"] == 1
+        result = m.result
+        assert "x_gain" in result.xindexes
+        assert "x_offset" in result.xindexes
+    finally:
+        _cleanup(m)

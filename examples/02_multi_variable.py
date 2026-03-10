@@ -73,5 +73,4 @@ class MultiVariableMeasurement(Measurement):
 
 
 measurement = MultiVariableMeasurement()
-measurement.run()
-measurement.result
+measurement
