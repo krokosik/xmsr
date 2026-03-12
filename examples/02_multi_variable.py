@@ -7,6 +7,7 @@ Shows tuple autowrap into an `xr.Dataset` result template.
 
 # %%
 from pathlib import Path
+from time import sleep
 
 import numpy as np
 import xarray as xr
@@ -26,7 +27,11 @@ class MultiVariableMeasurement(Measurement):
         field=np.linspace(-1.5, 1.5, 7),
     )
 
+    # You may measure more than one variable at once. In this case, you can return a tuple
+    # of arrays and use a Dataset as template. Note that this makes
+    # sense if they have heterogeneous metadata, otherwise you can just use a DataArray with more dimensions.
     result_template = xr.Dataset(
+        # a dataset is essentially a dict of DataArrays
         {
             "voltage": xr.DataArray(
                 np.empty((300,), dtype=np.float64),
@@ -52,23 +57,23 @@ class MultiVariableMeasurement(Measurement):
                 },
                 attrs={"units": "A"},
             ),
-            "resistance": xr.DataArray(
-                np.empty((), dtype=np.float64),
-                dims=(),
-                attrs={"units": "Ohm"},
-            ),
+            "resistance": xr.DataArray(attrs={"units": "Ohm"}),
         }
     )
 
     def measure(self, values, indices, metadata):
-        time = self.result_template["voltage"].coords["time"].values
-        field = float(values["field"])
-        temperature = float(values["temperature"])
-        index_mod = 1 + 0.05 * int(indices["field"])
+        index_mod = 1 + 0.05 * indices["field"]
 
-        voltage = 2e-3 * np.sin(2 * np.pi * 120.0 * time + field) * index_mod
-        current = (1e-3 + 2e-4 * temperature) * np.cos(2 * np.pi * 120.0 * time)
+        voltage = (
+            2e-3
+            * np.sin(2 * np.pi * 120.0 * self.coords.time + values["field"])
+            * index_mod
+        )
+        current = (1e-3 + 2e-4 * values["temperature"]) * np.cos(
+            2 * np.pi * 120.0 * self.coords.time
+        )
         resistance = float(np.mean(voltage) / (np.mean(current) + 1e-12))
+        sleep(0.1)
         return voltage, current, resistance
 
 

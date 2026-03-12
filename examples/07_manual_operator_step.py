@@ -33,13 +33,11 @@ class ManualStepMeasurement(Measurement):
     )
 
     def measure(self, values, indices, metadata):
-        if int(indices["stage"]) == 3:
-            self.wait_for_manual_resume(
-                "Manual step required: adjust the hardware stage, then resume the measurement."
-            )
-            metadata["manual_adjustment_done"] = True
+        self.wait_for_manual_resume(
+            f"Manual step required: adjust the hardware stage to position {values['stage']} and click to continue the scan."
+        )
 
-        stage = float(values["stage"])
+        stage = values["stage"]
         return np.sin(np.linspace(0, 8, 80) + stage)
 
 

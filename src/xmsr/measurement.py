@@ -64,6 +64,7 @@ class Measurement(Thread):
 
     sweep_template: xr.Dataset | xr.DataArray
     result_template: xr.Dataset | xr.DataArray
+    coords: xr.Dataset
 
     _sweep: xr.Dataset
     _sweep_dims: tuple[str, ...]
@@ -170,13 +171,18 @@ class Measurement(Thread):
         cls._sweep_dims = tuple(str(dim) for dim in sweep.sizes.keys())
         cls._sweep_sizes = tuple(int(size) for size in sweep.sizes.values())
 
+        coords_ds = cls.sweep_template.assign_coords(cls.result_template.coords)
+        cls.coords = (
+            coords_ds if isinstance(coords_ds, xr.Dataset) else coords_ds.to_dataset()
+        )
+
     def prepare(self, metadata: dict[str, Any]):
         self.LOG.debug("Preparing...")
 
     def measure(
         self,
         values: dict[str, Any],
-        indices: dict[str, int | tuple[int, ...]],
+        indices: dict[str, int],
         metadata: dict[str, Any],
     ) -> npt.ArrayLike | tuple[npt.ArrayLike, ...]:
         """Measure one sweep point.

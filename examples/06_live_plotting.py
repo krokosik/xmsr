@@ -35,23 +35,23 @@ class LivePlotMeasurement(Measurement):
     )
 
     def measure(self, values, indices, metadata):
-        frequency = self.result_template.coords["frequency"].values
-        gate = float(values["gate"])
-        bias = float(values["bias"])
-        center = 5500 + 600 * gate
-        width = 400 + 30 * int(indices["bias"])
-        return np.exp(-((frequency - center) ** 2) / (2 * width**2)) + 0.1 * bias
+        center = 5500 + 600 * values["gate"]
+        width = 400 + 30 * indices["bias"]
+        return (
+            np.exp(-((self.coords.frequency - center) ** 2) / (2 * width**2))
+            + 0.1 * values["bias"]
+        )
 
+    # you can live plot a preview of the already collected data using hvplot
     def plot_preview(self, data: DataArray | Dataset):
-        if isinstance(data, Dataset):
-            data = data["spectrum"]
-        return data.mean(dim=["gate", "bias"]).hvplot.line()
+        return data.mean(dim=["gate", "bias"]).hvplot.line(ylim=(-0.2, 1.2))
 
+    # or a single step
     def plot_single_step(self, data: DataArray | Dataset):
-        if isinstance(data, Dataset):
-            data = data["spectrum"]
-        return data.hvplot.line()
+        return data.hvplot.line(ylim=(-0.2, 1.2))
 
 
 measurement = LivePlotMeasurement()
 measurement
+
+# %%
