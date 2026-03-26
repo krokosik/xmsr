@@ -167,15 +167,15 @@ class Measurement(Thread):
                     "Sweep and result coordinates must be 1D. Use derived coordinates for multi-dimensional coordinate logic."
                 )
 
-    def prepare(self, metadata: dict[str, Any]):
+    def prepare(self, metadata: dict):
         self.LOG.debug("Preparing...")
 
     def measure(
         self,
-        values: dict[str, Any],
+        values: dict,
         indices: dict[str, int],
-        metadata: dict[str, Any],
-    ) -> npt.ArrayLike | tuple[npt.ArrayLike, ...]:
+        metadata: dict,
+    ) -> np.typing.ArrayLike | tuple[np.typing.ArrayLike, ...]:
         """Measure one sweep point.
 
         Args:
@@ -189,7 +189,7 @@ class Measurement(Thread):
         """
         raise NotImplementedError
 
-    def finish(self, metadata: dict[str, Any]):
+    def finish(self, metadata: dict):
         self.LOG.debug("Done")
 
     def _start_measurement(self):
