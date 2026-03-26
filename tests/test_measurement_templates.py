@@ -264,6 +264,7 @@ def test_metadata_on_resume(zarr_format: int):
     try:
         _run_blocking(m)
         m = _MetadataAppendMeasurement(overwrite=False, zarr_format=zarr_format)
+        _run_blocking(m)
 
         attrs = m.metadata
         assert (
@@ -274,3 +275,20 @@ def test_metadata_on_resume(zarr_format: int):
         assert attrs["finalized"] is True
     finally:
         _cleanup(m)
+
+
+def test_xarray_zarr_attrs():
+    ds_path = "tmp/ds"
+    xr.Dataset().assign_attrs(a=1).to_zarr(ds_path, mode="w")
+    xr.open_dataset(ds_path, engine="zarr").assign_attrs(b=2).to_zarr(ds_path, mode="a")
+
+    da_path = "tmp/da"
+    xr.DataArray().assign_attrs(a=1).to_zarr(da_path, mode="w")
+    xr.open_dataarray(da_path, engine="zarr").assign_attrs(b=2).to_zarr(
+        da_path, mode="a"
+    )
+
+    assert (
+        xr.open_dataset(ds_path, engine="zarr").attrs
+        == xr.open_dataarray(da_path, engine="zarr").attrs
+    )

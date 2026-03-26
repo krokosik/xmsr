@@ -13,7 +13,6 @@ from typing import Any, Optional, TypedDict, cast
 
 import holoviews as hv
 import numpy as np
-import numpy.typing as npt
 import xarray as xr
 import zarr
 
@@ -193,7 +192,6 @@ class Measurement(Thread):
         self.LOG.debug("Done")
 
     def _start_measurement(self):
-        self.prepare(self.metadata)
         self._last_measurement_shapes = None
 
         filename = self.filename + self._get_filename_suffix(
@@ -204,9 +202,16 @@ class Measurement(Thread):
         self.LOG.debug(f"Full path:\n{os.path.abspath(self._path)}")
 
         try:
-            current_index_attr = zarr.open(str(self._path), mode="r").attrs[
-                _CURRENT_INDEX_KEY
-            ]
+            store_attrs = dict(zarr.open(str(self._path), mode="r").attrs)
+            existing_metadata = {
+                key: value
+                for key, value in store_attrs.items()
+                if key != _CURRENT_INDEX_KEY
+            }
+            existing_metadata.update(self.metadata)
+            self.metadata = existing_metadata
+
+            current_index_attr = store_attrs[_CURRENT_INDEX_KEY]
             self.current_index = int(cast(Any, current_index_attr))
             self.LOG.debug(
                 f"Found existing data with {self.current_index} measurements, resuming..."
@@ -224,6 +229,7 @@ class Measurement(Thread):
             self.current_index = 0
             shutil.rmtree(self._path)
 
+        self.prepare(self.metadata)
         self.LOG.debug("Starting measurements...")
 
     def _indices_tuple_for_linear_index(self, idx: int) -> tuple[int, ...]:
@@ -612,7 +618,9 @@ class Measurement(Thread):
             self.LOG.error("Measurement not started yet")
             return xr.Dataset()
 
-        ds = self._apply_derived_xindexes(xr.open_dataset(self._path, engine="zarr"))
+        ds = self._apply_derived_xindexes(
+            xr.open_dataset(self._path, engine="zarr", consolidated=False)
+        )
         selected = ds.isel(dict(zip(self._sweep_dims, indices)))
         return self._to_public_result_type(selected)
 
@@ -634,7 +642,9 @@ class Measurement(Thread):
 
     @property
     def result(self) -> xr.DataArray | xr.Dataset:
-        ds = self._apply_derived_xindexes(xr.open_dataset(self._path, engine="zarr"))
+        ds = self._apply_derived_xindexes(
+            xr.open_dataset(self._path, engine="zarr", consolidated=False)
+        )
         return self._to_public_result_type(ds)
 
     def plot_result(self, *args, **kwargs):
