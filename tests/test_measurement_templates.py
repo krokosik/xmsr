@@ -203,3 +203,29 @@ def test_derived_coords_exposed_in_values_and_indices(zarr_format: int):
         assert "x_offset" in result.xindexes
     finally:
         _cleanup(m)
+
+
+class _MetadataAppendMeasurement(_DataArrayAutoWrapMeasurement):
+    def measure(self, values, indices, metadata):
+        if "measure_count" not in metadata:
+            metadata["measure_count"] = 0
+        metadata["measure_count"] += 1
+        return super().measure(values, indices, metadata)
+
+
+@pytest.mark.parametrize("zarr_format", [2, 3])
+def test_metadata_persistence_across_measures(
+    zarr_format: int, caplog: pytest.LogCaptureFixture
+):
+    caplog.set_level("INFO")
+    if zarr_format == 3 and not _supports_zarr_v3():
+        pytest.skip("zarr format 3 tests require zarr>=3 in this environment")
+    m = _MetadataAppendMeasurement(overwrite=True, zarr_format=zarr_format)
+    try:
+        _run_blocking(m)
+        assert (
+            m.metadata["measure_count"]
+            == m.sweep_template.sizes["a"] * m.sweep_template.sizes["b"]
+        )
+    finally:
+        _cleanup(m)
