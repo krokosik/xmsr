@@ -64,23 +64,9 @@ class Measurement(Thread):
 
     sweep_template: xr.Dataset | xr.DataArray
     result_template: xr.Dataset | xr.DataArray
-    coords: xr.Dataset
 
-    _sweep: xr.Dataset
-    _sweep_dims: tuple[str, ...]
-    _sweep_sizes: tuple[int, ...]
-    _result_template_ds: xr.Dataset
-    _result_is_dataarray: bool
-    _result_var_name: str
-    _last_measurement_shapes: Optional[tuple[tuple[int, ...], ...]]
-
-    last_measurement: xr.DataArray | xr.Dataset | None
-    _current_index: int
-    _path: Path
-    _exception: Exception
     LOG: logging.Logger
 
-    metadata: dict[str, Any] = {}
     filename: str
     timestamp: bool = True
     overwrite: bool = False
@@ -101,7 +87,7 @@ class Measurement(Thread):
         target_directory: Optional[str] = None,
     ):
         super().__init__()
-        self.metadata = metadata if metadata is not None else self.metadata
+        self.metadata = metadata if metadata is not None else {}
         self.filename = filename if filename is not None else self.__class__.__name__
         self.timestamp = timestamp if timestamp is not None else self.timestamp
         self.overwrite = overwrite if overwrite is not None else self.overwrite
@@ -175,6 +161,11 @@ class Measurement(Thread):
         cls.coords = (
             coords_ds if isinstance(coords_ds, xr.Dataset) else coords_ds.to_dataset()
         )
+        for coord in cls.coords.values():
+            if coord.ndim > 1:
+                raise ValueError(
+                    "Sweep and result coordinates must be 1D. Use derived coordinates for multi-dimensional coordinate logic."
+                )
 
     def prepare(self, metadata: dict[str, Any]):
         self.LOG.debug("Preparing...")
@@ -259,13 +250,11 @@ class Measurement(Thread):
 
     def _values_and_indices_for_indices_tuple(
         self, indices: tuple[int, ...]
-    ) -> tuple[dict[str, Any], dict[str, int | tuple[int, ...]]]:
+    ) -> tuple[dict[str, Any], dict[str, int]]:
         indices_by_dim = dict(zip(self._sweep_dims, indices))
 
         values: dict[str, Any] = {}
-        indices_dict: dict[str, int | tuple[int, ...]] = {
-            dim: index for dim, index in indices_by_dim.items()
-        }
+        indices_dict = {dim: index for dim, index in indices_by_dim.items()}
 
         for dim, index in indices_by_dim.items():
             coord = self._sweep.coords.get(dim)
@@ -285,10 +274,7 @@ class Measurement(Thread):
 
             values[name] = self._coord_value_for_indices(coord, indices_by_dim)
 
-            if len(coord_dims) == 1:
-                indices_dict[name] = indices_by_dim[coord_dims[0]]
-            else:
-                indices_dict[name] = tuple(indices_by_dim[dim] for dim in coord_dims)
+            indices_dict[name] = indices_by_dim[coord_dims[0]]
 
         return values, indices_dict
 
