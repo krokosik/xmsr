@@ -1,6 +1,7 @@
 import logging
 import os.path
 import sys
+from html import escape
 from contextlib import contextmanager, suppress
 from typing import TYPE_CHECKING, Callable, cast
 
@@ -93,6 +94,41 @@ display(
     --jp-widgets-slider-handle-border-color: var(--vscode-focusBorder);
     --jp-widgets-slider-handle-background-color: var(--vscode-button-background);
     --jp-widgets-slider-active-handle-color: var(--vscode-button-hoverBackground);
+
+    --xmsr-log-output-height: 160px;
+}
+
+.xmsr-log {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+    margin: 0;
+    font-family: var(--jp-code-font-family);
+    font-size: var(--jp-code-font-size);
+}
+
+.xmsr-log-output {
+    max-height: var(--xmsr-log-output-height) !important;
+    min-height: var(--xmsr-log-output-height) !important;
+    overflow-y: auto !important;
+}
+
+.xmsr-log-debug {
+    color: var(--jp-content-font-color2);
+}
+
+.xmsr-log-info {
+    color: var(--jp-info-color0);
+}
+
+.xmsr-log-warning {
+    color: var(--jp-warn-color0);
+}
+
+.xmsr-log-error,
+.xmsr-log-critical {
+    color: var(--jp-error-color0);
+    font-weight: 600;
 }
 </style>
 """
@@ -220,7 +256,8 @@ def live_info(
 
     status = widgets.HTML(value=_info_html(measurement))
 
-    output = widgets.Output(layout=widgets.Layout(height="100px"))
+    output = widgets.Output()
+    output.add_class("xmsr-log-output")
 
     def ui_update():
         status.value = _info_html(measurement)
@@ -232,7 +269,7 @@ def live_info(
         status.value = _info_html(measurement)
         cancel.layout.display = "none"
         output.append_display_data(measurement.result)
-        output.layout.height = None
+        output.remove_class("xmsr-log-output")
 
     if measurement.status != MeasurementStatus.RUNNING:
         progress_bar.container.layout.visibility = "hidden"
@@ -240,24 +277,23 @@ def live_info(
         run.description = "Pause"
         progress_bar.displayed = True
 
-    display(
-        widgets.VBox(
-            (
-                widgets.HBox(
-                    (header, widgets.HBox((run, cancel))),
-                    layout=widgets.Layout(
-                        justify_content="space-between",
-                        width="100%",
-                        align_items="flex-end",
-                    ),
+    controls_box = widgets.VBox(
+        (
+            widgets.HBox(
+                (header, widgets.HBox((run, cancel))),
+                layout=widgets.Layout(
+                    justify_content="space-between",
+                    width="100%",
+                    align_items="flex-end",
                 ),
-                status,
-                progress_bar.container,
-                output,
             ),
-            layout=widgets.Layout(max_width="700px"),
-        )
+            status,
+            progress_bar.container,
+        ),
+        layout=widgets.Layout(max_width="700px"),
     )
+    main_box = widgets.VBox((controls_box, output))
+    display(main_box)
 
     return LiveInfoElements(
         ui_update=ui_update,
@@ -317,6 +353,38 @@ def _info_html(measurement: "Measurement") -> str:
     """
 
 
+class _OutputHtmlFormatter(logging.Formatter):
+    """Render log records as wrapped, level-colored HTML."""
+
+    _LEVEL_CLASS = {
+        logging.DEBUG: "xmsr-log-debug",
+        logging.INFO: "xmsr-log-info",
+        logging.WARNING: "xmsr-log-warning",
+        logging.ERROR: "xmsr-log-error",
+        logging.CRITICAL: "xmsr-log-critical",
+    }
+
+    def __init__(self, base_formatter: logging.Formatter | None = None):
+        super().__init__()
+        self._base_formatter = base_formatter
+        self._fallback_formatter = logging.Formatter()
+
+    def format_plain(self, record: logging.LogRecord) -> str:
+        if self._base_formatter is None:
+            return self._fallback_formatter.format(record)
+        return self._base_formatter.format(record)
+
+    def format_pair(self, record: logging.LogRecord) -> tuple[str, str]:
+        plain = self.format_plain(record)
+        level_class = self._LEVEL_CLASS.get(record.levelno, "xmsr-log-info")
+        html = f'<div class="xmsr-log {level_class}">{escape(plain)}</div>'
+        return html, plain
+
+    def format(self, record: logging.LogRecord) -> str:
+        html, _ = self.format_pair(record)
+        return html
+
+
 class _OutputWidgetHandler(logging.Handler):
     """Custom logging handler sending logs to an output widget"""
 
@@ -326,11 +394,21 @@ class _OutputWidgetHandler(logging.Handler):
 
     def emit(self, record):
         """Overload of logging.Handler method"""
-        formatted_record = self.format(record)
+        formatter = self.formatter
+        if isinstance(formatter, _OutputHtmlFormatter):
+            formatted_record, plain_record = formatter.format_pair(record)
+        else:
+            plain_record = self.format(record)
+            formatted_record = (
+                f'<div class="xmsr-log xmsr-log-info">{escape(plain_record)}</div>'
+            )
         new_output = {
-            "name": "stdout",
-            "output_type": "stream",
-            "text": formatted_record + "\n",
+            "output_type": "display_data",
+            "data": {
+                "text/html": formatted_record,
+                "text/plain": plain_record,
+            },
+            "metadata": {},
         }
         self.out.outputs = (new_output,) + self.out.outputs
 
@@ -369,8 +447,15 @@ def logging_redirect_ipywidgets(
             out_handler = _OutputWidgetHandler(output_widget)
             orig_handler = _get_first_found_console_logging_handler(logger.handlers)
             if orig_handler is not None:
-                out_handler.setFormatter(orig_handler.formatter)
                 out_handler.stream = orig_handler.stream  # type: ignore[assignment]
+            out_handler.setFormatter(
+                _OutputHtmlFormatter(
+                    logging.Formatter(
+                        fmt="%(asctime)s [%(levelname).1s] | %(message)s",
+                        datefmt="%H:%M:%S",
+                    )
+                )
+            )
             logger.handlers = [
                 handler
                 for handler in logger.handlers
