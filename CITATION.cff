@@ -1,0 +1,26 @@
+# This CITATION.cff file was generated with cffinit.
+# Visit https://bit.ly/cffinit to generate yours today!
+
+cff-version: 1.2.0
+title: XMSR - Xarray Measurement Wrapper
+message: >-
+  If you use this software, please cite it using the
+  metadata from this file.
+type: software
+authors:
+  - given-names: Wiktor
+    family-names: Krokosz
+    email: w.krokosz@cent.uw.edu.pl
+    affiliation: University of Warsaw
+    orcid: 'https://orcid.org/0000-0002-9958-0214'
+repository-code: 'https://github.com/krokosik/xmsr'
+abstract: >-
+  A Python framework for running parametric measurements and
+  storing results in Zarr using xarray-native schemas.
+keywords:
+  - python
+  - automation
+  - science
+license: MIT
+commit: 39b15a01cbfb77eaac8d9069087bc7bfb9dcff7a
+version: 0.3.1
