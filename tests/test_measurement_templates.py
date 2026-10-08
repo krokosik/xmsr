@@ -10,35 +10,7 @@ import zarr
 from xmsr import Measurement
 
 
-class _NoUiMixin:
-    def _live_info(self, **kwargs):
-        class _Pbar:
-            format_dict = {
-                "n": 0,
-                "total": 1,
-                "percentage": 0.0,
-                "elapsed": 0.0,
-                "remaining": 0.0,
-                "rate": 0.0,
-                "unit": "it",
-                "unit_scale": False,
-                "unit_divisor": 1000,
-                "ncols": None,
-                "nrows": None,
-            }
-
-            def unpause(self):
-                pass
-
-            def update(self, _):
-                pass
-
-        self.pbar = _Pbar()
-        self._ui_update = lambda: None
-        self._ui_finish = lambda: None
-
-
-class _DatasetAutoWrapMeasurement(_NoUiMixin, Measurement):
+class _DatasetAutoWrapMeasurement(Measurement):
     target_directory = tempfile.gettempdir()
     filename = "xmsr_test_dataset_autowrap"
     overwrite = True
@@ -63,7 +35,7 @@ class _DatasetAutoWrapMeasurement(_NoUiMixin, Measurement):
         return np.arange(4, dtype=float), float(values["x"] + values["y"])
 
 
-class _DataArrayAutoWrapMeasurement(_NoUiMixin, Measurement):
+class _DataArrayAutoWrapMeasurement(Measurement):
     target_directory = tempfile.gettempdir()
     filename = "xmsr_test_dataarray_autowrap"
     overwrite = True
@@ -82,7 +54,7 @@ class _DataArrayAutoWrapMeasurement(_NoUiMixin, Measurement):
         return np.array([1.0, 2.0, 3.0], dtype=np.float32)
 
 
-class _WrongShapeMeasurement(_NoUiMixin, Measurement):
+class _WrongShapeMeasurement(Measurement):
     target_directory = tempfile.gettempdir()
     filename = "xmsr_test_wrong_shape"
     overwrite = True
@@ -99,6 +71,7 @@ class _WrongShapeMeasurement(_NoUiMixin, Measurement):
 
 
 def _run_blocking(measurement: Measurement):
+    measurement.notebook_ui = False
     measurement.started.set()
     measurement.run()
 
@@ -149,6 +122,7 @@ def test_autowrap_shape_mismatch_raises_value_error(zarr_format: int):
     if zarr_format == 3 and not _supports_zarr_v3():
         pytest.skip("zarr format 3 tests require zarr>=3 in this environment")
     m = _WrongShapeMeasurement(overwrite=True, zarr_format=zarr_format)
+    m.notebook_ui = False
     try:
         m.started.set()
         try:
@@ -161,7 +135,7 @@ def test_autowrap_shape_mismatch_raises_value_error(zarr_format: int):
         _cleanup(m)
 
 
-class _DerivedCoordsExposureMeasurement(_NoUiMixin, Measurement):
+class _DerivedCoordsExposureMeasurement(Measurement):
     target_directory = tempfile.gettempdir()
     filename = "xmsr_test_derived_coords"
     overwrite = True

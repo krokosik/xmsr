@@ -29,12 +29,23 @@ dependencies = [
     "holoviews>=1.22.1",
     "hvplot>=0.12.2",
     "ipywidgets>=8.1.8",
+    "anywidget>=0.9.21",
     "jupyter-bokeh>=4.0.5",
 ]
 
 [build-system]
 requires = ["uv_build>=0.8.23,<1"]
 build-backend = "uv_build"
+
+[tool.uv.build-backend]
+source-include = [
+    "frontend/**",
+    "tests/**",
+    "package.json",
+    "package-lock.json",
+    "tsconfig.json",
+    "vite.config.ts",
+]
 
 [dependency-groups]
 dev = [

@@ -1,4 +1,3 @@
-import contextlib
 import logging
 import os
 import shutil
@@ -16,7 +15,6 @@ import numpy as np
 import xarray as xr
 import zarr
 
-from xmsr.notebook_integration import live_info, live_plot, logging_redirect_ipywidgets
 from xmsr.qt_integration import Thread
 from xmsr.shared import MeasurementStatus
 
@@ -84,8 +82,18 @@ class Measurement(Thread):
         zarr_format: Optional[int] = None,
         metadata: Optional[dict[str, Any]] = None,
         target_directory: Optional[str] = None,
+        notebook_ui: bool = True,
     ):
         super().__init__()
+        self.notebook_ui = notebook_ui
+        self._ui_update = lambda: None
+        self._ui_finish = lambda: None
+        self._progress_started_at: float | None = None
+        self._progress_finished_at: float | None = None
+        self._progress_initial_index = 0
+        self._current_index = 0
+        self._control_lock = threading.RLock()
+        self._controls_used = False
         self.metadata = metadata if metadata is not None else {}
         self.filename = filename if filename is not None else self.__class__.__name__
         self.timestamp = timestamp if timestamp is not None else self.timestamp
@@ -313,13 +321,16 @@ class Measurement(Thread):
             self._start_measurement()
             self._live_info()
 
+            if threading.current_thread() is threading.main_thread():
+                self.started.set()
             self._wait_on(self.started)
-
-            if hasattr(self, "_ui_thread"):
-                self._ui_thread.start()
-
-            self.running.set()
-            self.finished.clear()
+            with self._control_lock:
+                if not self.cancelled.is_set():
+                    self._progress_started_at = time.monotonic()
+                    self._progress_initial_index = self.current_index
+                    if not self._controls_used:
+                        self.running.set()
+            self._ui_update()
 
             while not self.finished.is_set():
                 self._wait_on(self.running)
@@ -335,8 +346,6 @@ class Measurement(Thread):
                 self.store_xarray(indices_tuple, result)
                 self.LOG.debug("Stored measurement chunk.")
                 self.current_index += 1
-                self._ui_update()
-                self.LOG.debug("UI updated.")
 
                 self.LOG.debug(f"Current index: {self.current_index}")
 
@@ -350,16 +359,18 @@ class Measurement(Thread):
                 self._finalize_measurement()
 
         except Exception as e:
+            self._exception = e
             self.LOG.exception(e)
             self.cancel()
-            self._exception = e
-            raise e
+            raise
+        finally:
+            self._progress_finished_at = time.monotonic()
+            self._ui_finish()
 
     def _finalize_measurement(self):
         self.LOG.debug("Finalizing measurement...")
         self.finish(self.metadata)
         self._update_metadata()
-        self._ui_finish()
 
     def _wait_on(self, event: Event):
         if threading.current_thread() is not threading.main_thread():
@@ -377,8 +388,7 @@ class Measurement(Thread):
         else:
             self._current_index = self._linear_index_for_indices_tuple(index)
 
-        if hasattr(self, "pbar"):
-            self.progress_queue.put_nowait(self._get_progress_dict())
+        self.progress_queue.put_nowait(self._get_progress_dict())
 
     @property
     def current_point(self) -> tuple[tuple[int, ...], dict[str, Any]]:
@@ -411,12 +421,29 @@ class Measurement(Thread):
         return self._linear_index_for_indices_tuple(indices)
 
     def pause_unpause(self) -> None:
+        """Toggle pause for existing programmatic callers."""
         if self.running.is_set():
-            self.running.clear()
+            self.pause()
         else:
+            self.resume()
+
+    def pause(self) -> None:
+        """Request a pause before the next measurement step."""
+        with self._control_lock:
+            if self.status != MeasurementStatus.RUNNING:
+                return
+            self._controls_used = True
+            self.running.clear()
+        self._ui_update()
+
+    def resume(self) -> None:
+        """Start or resume acquisition without toggling an existing run."""
+        with self._control_lock:
+            if self.status not in {MeasurementStatus.INIT, MeasurementStatus.PAUSED}:
+                return
+            self._controls_used = True
             self.running.set()
-            if not self.started.is_set():
-                self.started.set()
+            self.started.set()
         self._ui_update()
 
     def wait_for_manual_resume(
@@ -434,30 +461,53 @@ class Measurement(Thread):
         self.LOG.info(message)
         if clear_running:
             self.running.clear()
+        self._ui_update()
         self._wait_on(self.running)
 
     def cancel(self) -> None:
-        self.cancelled.set()
-        self.finished.set()
-        self.running.clear()
+        """Cancel acquisition and wake workers waiting for start or resume."""
+        with self._control_lock:
+            self.cancelled.set()
+            self.finished.set()
+            # Wake either wait point; cancellation takes precedence in status/run.
+            self.started.set()
+            self.running.set()
+        self._ui_update()
 
     def _get_progress_dict(self) -> ProgressDict:
         clamped = min(self.current_index, max(self.ntotal - 1, 0))
-        progress = cast(
-            ProgressDict,
-            {
-                **self.pbar.format_dict,
-                "indices": self._indices_tuple_for_linear_index(clamped),
-            },
+        now = self._progress_finished_at or time.monotonic()
+        elapsed = (
+            max(0.0, now - self._progress_started_at)
+            if self._progress_started_at is not None
+            else 0.0
         )
-        return progress
+        completed = max(0, self.current_index - self._progress_initial_index)
+        rate = completed / elapsed if elapsed > 0 else 0.0
+        return {
+            "n": self.current_index,
+            "total": self.ntotal,
+            "percentage": 100 * self.current_index / self.ntotal
+            if self.ntotal
+            else 0.0,
+            "elapsed": elapsed,
+            "remaining": max(0, self.ntotal - self.current_index) / rate
+            if rate
+            else 0.0,
+            "rate": rate,
+            "unit": "it",
+            "unit_scale": False,
+            "unit_divisor": 1000,
+            "ncols": None,
+            "nrows": None,
+            "indices": self._indices_tuple_for_linear_index(clamped)
+            if self.ntotal
+            else tuple(0 for _ in self._sweep_dims),
+        }
 
     def _revert_progress(self, indices: tuple[int, ...] | int):
-        previous_index = getattr(self, "_current_index", 0)
         self.current_index = indices
-        self.pbar.unpause()
-        self.pbar.update(self.current_index - previous_index)
-        self.progress_queue.put_nowait(self._get_progress_dict())
+        self._ui_update()
 
     def _combine_sweep_and_result_templates(self) -> xr.Dataset:
         merged = xr.Dataset()
@@ -681,45 +731,36 @@ class Measurement(Thread):
         return autogenerated_filename
 
     def _live_info(self, *, update_interval: float = 0.1) -> None:
-        live_info_elements = live_info(
-            self,
-            on_toggle_pause=self.pause_unpause,
-            on_cancel=self.cancel,
-        )
+        if not self.notebook_ui:
+            return
+        from .notebook_integration import live_info, live_plot
+        from .runner_widget import logging_redirect_widget
+
+        live_info_elements = live_info(self)
         self.update_plots = live_plot(self)
 
         self.LOG.debug("Using notebook live info integration")
         self._ui_update = live_info_elements.ui_update
-        self.pbar = live_info_elements.pbar
-
-        self._ui_ctx = logging_redirect_ipywidgets(
-            live_info_elements.output, loggers=[self.LOG]
-        )
+        self._ui_ctx = logging_redirect_widget(live_info_elements.widget, self.LOG)
         self._ui_ctx.__enter__()
+        stop_updates = Event()
 
         def finish_wrapper():
-            self.LOG.debug("Finalizing UI...")
-            live_info_elements.ui_finish()
+            stop_updates.set()
+            self._ui_thread.join()
+            try:
+                live_info_elements.ui_finish()
+            finally:
+                self._ui_ctx.__exit__(None, None, None)
 
         self._ui_finish = finish_wrapper
 
         def ui_updater():
-            idx = 0
-            while not self.finished.is_set():
+            while not stop_updates.wait(update_interval):
                 self._ui_update()
-                if self.current_index > idx:
-                    idx = self.current_index
-                time.sleep(update_interval)
-            self._ui_update()
-            self._ui_ctx.__exit__(None, None, None)
 
         self._ui_thread = threading.Thread(target=ui_updater, daemon=True)
-
-    def __del__(self):
-        with contextlib.suppress(Exception):
-            self.finished.set()
-        with contextlib.suppress(Exception):
-            self._ui_finish()
+        self._ui_thread.start()
 
     def _ipython_display_(self):
         self.start()
