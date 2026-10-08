@@ -316,6 +316,19 @@ class Measurement(Thread):
 
         return indices_tuple, wrapped
 
+    def start(self, *args: Any, **kwargs: Any) -> None:
+        """Initialize notebook rendering before launching the acquisition thread.
+
+        Args:
+            *args: Positional arguments passed to the threading or Qt backend.
+            **kwargs: Keyword arguments passed to the backend's start method.
+        """
+        if self.notebook_ui:
+            from .notebook_integration import initialize_notebook
+
+            initialize_notebook()
+        super().start(*args, **kwargs)
+
     def run(self) -> None:
         try:
             self._start_measurement()
@@ -733,9 +746,10 @@ class Measurement(Thread):
     def _live_info(self, *, update_interval: float = 0.1) -> None:
         if not self.notebook_ui:
             return
-        from .notebook_integration import live_info, live_plot
+        from .notebook_integration import initialize_notebook, live_info, live_plot
         from .runner_widget import logging_redirect_widget
 
+        initialize_notebook()
         live_info_elements = live_info(self)
         self.update_plots = live_plot(self)
 
