@@ -34,7 +34,8 @@ Auto-wrap behavior:
 - Zarr-backed storage with resume support
 - Non-blocking execution in a background thread
 - Xarray-native data model (no custom coord serialization layer)
-- IPython widget integration for status/progress and optional live plotting
+- React/anywidget notebook controls, progress, and structured logs
+- Optional HoloViews/Bokeh live plotting
 
 ## Examples
 
@@ -160,7 +161,10 @@ Runtime behavior can be configured via class attributes or constructor args:
 ## Running Tests
 
 ```bash
-uv run python -m pytest tests/test_measurement_templates.py
+uv run python -m pytest tests
+npm ci
+npm test
+npm run typecheck
 ```
 
 ## Non-Blocking Execution
@@ -169,9 +173,78 @@ uv run python -m pytest tests/test_measurement_templates.py
 measurement = BasicMeasurement()
 measurement.start()
 
-measurement.running.clear()  # pause
-measurement.running.set()    # resume
+measurement.pause()
+measurement.resume()  # Also starts acquisition if awaiting Start
 
 measurement.finished.wait()
 result = measurement.result
+```
+
+## Notebook Runner (VS Code)
+
+Display a measurement in a VS Code notebook to start its background worker and
+show the React runner panel:
+
+```python
+measurement = BasicMeasurement()
+measurement  # Last expression in a notebook cell
+```
+
+Use **Start**, **Pause**, **Resume**, and **Cancel** in the panel. Python owns the
+execution state; the panel displays synchronized snapshots and sends explicit
+commands. Cancellation wakes a worker waiting for start or resume, but cannot
+interrupt an instrument call already in progress. The panel retains the latest
+500 log records, provides filename/path clipboard buttons, and adapts to VS Code
+theme colors. Existing plots and the final rich xarray result are displayed
+alongside the panel.
+
+For scripts and headless tests, disable notebook UI explicitly:
+
+```python
+measurement = BasicMeasurement(notebook_ui=False)
+measurement.run()  # Blocking execution on the main thread
+```
+
+Progress and timing are calculated in Python without a widget or notebook
+progress bar. Elapsed time includes pauses; the rate is the average for newly
+completed steps in this invocation, including when resuming an existing archive.
+
+### Frontend Development
+
+The UI lives in `frontend/RunnerPanel.tsx`. `frontend/widget.tsx` is the thin
+anywidget adapter; `src/xmsr/runner_widget.py` implements the Python side of the
+state/command contract. React components are tested with Vitest and React Testing
+Library, and Python command dispatch/lifecycle behavior with pytest. Actual
+VS Code/VSCodium/code-server browser integration testing is deferred.
+
+Use Node.js 22.12+ (or 20.19+) and install the frontend dependencies:
+
+```bash
+npm ci
+npm run build
+```
+
+For live widget development, set this **before importing xmsr** in the notebook:
+
+```python
+%env ANYWIDGET_HMR=1
+```
+
+Then run `npm run watch` in a terminal. Rebuilt assets are hot-reloaded into the
+displayed widget. With production builds, restart the kernel after rebuilding
+to load the new assets.
+
+### Packaging
+
+The compiled, self-contained JavaScript/CSS in `src/xmsr/static/` are committed
+and included in Python distributions. Notebook users need no Node.js, dev server,
+or CDN access. After frontend changes, regenerate the assets before packaging:
+
+```bash
+npm run typecheck
+npm test
+npm run build
+uv run ruff check src tests
+uv run python -m pytest tests
+uv build
 ```
