@@ -20,7 +20,6 @@ _STATIC = Path(__file__).parent / "static"
 _TERMINAL = {
     MeasurementStatus.FINISHED,
     MeasurementStatus.CANCELLED,
-    MeasurementStatus.FAILED,
 }
 
 
@@ -36,6 +35,7 @@ class RunnerWidget(anywidget.AnyWidget):
     _css = _STATIC / "runner.css"
     state = traitlets.Dict().tag(sync=True)
     logs = traitlets.List(traitlets.Dict()).tag(sync=True)
+    axes = traitlets.List(traitlets.Dict()).tag(sync=True)
 
     def __init__(self, measurement: "Measurement", max_logs: int = 500):
         if max_logs < 1:
@@ -45,19 +45,43 @@ class RunnerWidget(anywidget.AnyWidget):
         self._records: deque[dict[str, Any]] = deque(maxlen=max_logs)
         self._log_id = 0
         self._finished = False
+        self._command_error = ""
+        self._snapshot_sequence = 0
+        self._published_sequence = 0
         super().__init__()
+        self.axes = [
+            {
+                "name": dim,
+                "values": [
+                    str(value) for value in measurement._sweep.coords[dim].values
+                ],
+                "units": str(measurement._sweep.coords[dim].attrs.get("units", "")),
+                "numeric": measurement._sweep.coords[dim].dtype.kind in "iuf",
+            }
+            for dim in measurement._sweep_dims
+        ]
         self.on_msg(self._on_command)
         self.publish()
 
     def publish(self) -> None:
         """Publish one consistent state snapshot and bounded log history."""
-        with self._lock:
-            if self._finished:
-                return
-            measurement = self.measurement
+        if self._finished:
+            return
+        measurement = self.measurement
+        # Snapshot the engine before acquiring the widget lock. Engine commands
+        # can emit logs, which need the widget lock in the opposite direction.
+        with measurement._control_lock:
+            self._snapshot_sequence += 1
+            sequence = self._snapshot_sequence
             path = getattr(measurement, "_path", None)
             progress = measurement._get_progress_dict()
-            self.state = {
+            selected = measurement.selected_index
+            selected_indices = measurement._indices_tuple_for_linear_index(selected)
+            selected_values, _ = measurement._values_and_indices_for_indices_tuple(
+                selected_indices
+            )
+            error = getattr(measurement, "_exception", None)
+            state = {
                 "name": measurement.__class__.__name__,
                 "status": measurement.status.value,
                 "completed": progress["n"],
@@ -67,16 +91,29 @@ class RunnerWidget(anywidget.AnyWidget):
                 "rate": progress["rate"],
                 "filename": path.name if path else "",
                 "path": str(path.resolve()) if path else "",
-                "error": str(measurement._exception)
-                if hasattr(measurement, "_exception")
-                else "",
+                "error": str(error) if error is not None else "",
+                "can_navigate": measurement.can_rewind,
+                "can_retry": measurement.can_retry,
+                "selected_index": selected,
+                "selected_indices": list(selected_indices),
+                "selection_recorded": selected < measurement._valid_until,
+                "selected_values": {
+                    key: str(value) for key, value in selected_values.items()
+                },
+                "revision": measurement._cursor_revision,
+                "reopened": measurement._resumed_from_disk,
             }
+        with self._lock:
+            if self._finished or sequence <= self._published_sequence:
+                return
+            self._published_sequence = sequence
+            self.state = {**state, "command_error": self._command_error}
             self.logs = list(self._records)
 
     def finish(self) -> None:
         """Publish the final snapshot and detach command handling."""
+        self.publish()
         with self._lock:
-            self.publish()
             self._finished = True
             self.on_msg(self._on_command, remove=True)
 
@@ -101,8 +138,14 @@ class RunnerWidget(anywidget.AnyWidget):
         with self._lock:
             if self._finished or self.measurement.status in _TERMINAL:
                 return
-            command = content.get("command")
-            status = self.measurement.status
+            self._command_error = ""
+        command = content.get("command")
+        if not isinstance(command, str):
+            return
+        status = self.measurement.status
+        # Commands may log or publish. Do not hold the widget lock while calling
+        # the engine, which also has an acquisition/control lock.
+        try:
             if command == "cancel":
                 self.measurement.cancel()
             elif (
@@ -114,7 +157,31 @@ class RunnerWidget(anywidget.AnyWidget):
                     self.measurement.pause()
                 else:
                     self.measurement.resume()
-            self.publish()
+            elif command == "retry" and self.measurement.can_retry:
+                self.measurement.resume()
+            elif command == "show_latest":
+                self.measurement.select_point(None)
+            elif command in {"select", "rewind"}:
+                indices = content.get("indices")
+                if not isinstance(indices, list):
+                    raise ValueError(
+                        "Provide one integer index for each sweep dimension"
+                    )
+                if command == "select":
+                    self.measurement.select_point(tuple(indices))
+                else:
+                    revision = content.get("revision")
+                    if isinstance(revision, bool) or not isinstance(revision, int):
+                        raise ValueError(
+                            "A rewind requires the current runner revision"
+                        )
+                    self.measurement.rewind(
+                        tuple(indices), expected_revision=revision, resume=True
+                    )
+        except (ValueError, RuntimeError, OSError) as error:
+            with self._lock:
+                self._command_error = str(error)
+        self.publish()
 
 
 class _WidgetLogHandler(logging.Handler):

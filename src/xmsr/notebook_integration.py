@@ -89,7 +89,7 @@ def live_plot(measurement: "Measurement") -> Callable[[], None]:
         # Keep the maps alive: Pipe stream subscribers and notebook display
         # hooks do not guarantee ownership of the DynamicMap after display().
         nonlocal step_pipe, step_dmap, full_buffer, full_dmap
-        step_da = measurement.last_measurement
+        step_da = measurement.display_measurement
         if use_step_plot and step_da is not None:
             if step_pipe is None:
                 step_pipe = Pipe(data=step_da)
@@ -101,7 +101,7 @@ def live_plot(measurement: "Measurement") -> Callable[[], None]:
                 step_pipe.send(step_da)
 
         full_da = None
-        if step_da is not None:
+        if hasattr(measurement, "_path") and measurement._path.exists():
             try:
                 full_da = measurement.result
             except Exception:

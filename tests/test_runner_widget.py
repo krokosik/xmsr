@@ -1,6 +1,7 @@
 import logging
 import sys
 import threading
+import time
 from io import StringIO
 from pathlib import Path
 
@@ -34,6 +35,13 @@ def measurement(tmp_path: Path) -> DemoMeasurement:
 
 def send(widget: RunnerWidget, command: str) -> None:
     widget._on_command(widget, {"command": command}, [])
+
+
+def wait_for(predicate):
+    deadline = time.monotonic() + 5
+    while not predicate():
+        assert time.monotonic() < deadline
+        threading.Event().wait(0.01)
 
 
 def test_explicit_commands_are_idempotent_and_terminal_states_are_guarded(measurement):
@@ -195,18 +203,141 @@ def test_notebook_lifecycle_publishes_final_state_and_stops_updates(
             measurement.run()
         widget = displayed[0]
         assert widget.state["status"] == ("failed" if fail else "finished")
-        assert not measurement._ui_thread.is_alive()
-        assert measurement.LOG.handlers == original_handlers
         if fail:
             assert widget.state["error"] == "Instrument failed"
+            assert widget.state["can_retry"]
+            assert measurement._ui_thread.is_alive()
+            assert not widget._finished
             assert any(
                 "Instrument failed" in record["message"] for record in widget.logs
             )
+            send(widget, "cancel")
+            assert widget.state["status"] == "cancelled"
         else:
             assert widget.state["completed"] == 3
             assert displayed[1].outputs
+        assert not measurement._ui_thread.is_alive()
+        assert measurement.LOG.handlers == original_handlers
         send(widget, "start")
-        assert widget.state["status"] == ("failed" if fail else "finished")
+        assert widget.state["status"] == ("cancelled" if fail else "finished")
     finally:
+        for item in displayed:
+            item.close()
+
+
+def test_widget_browses_saved_data_and_rejects_stale_or_unsafe_rewinds(measurement):
+    measurement.timestamp = False
+    measurement.with_coords = False
+    measurement.run()
+    loaded = DemoMeasurement(
+        target_directory=measurement.target_directory,
+        timestamp=False,
+        with_coords=False,
+        notebook_ui=False,
+    )
+    loaded.prepared = threading.Event()
+    loaded._start_measurement()
+    widget = RunnerWidget(loaded)
+    entered = threading.Event()
+    release = threading.Event()
+    acquire = loaded.measure
+
+    def measure(values, indices, metadata):
+        entered.set()
+        assert release.wait(5)
+        return acquire(values, indices, metadata)
+
+    loaded.measure = measure
+    try:
+        assert widget.state["reopened"]
+        assert widget.axes == [
+            {"name": "point", "values": ["0", "1", "2"], "units": "", "numeric": True}
+        ]
+        widget._on_command(widget, {"command": "select", "indices": [1]}, [])
+        assert widget.state["selected_indices"] == [1]
+        assert widget.state["selection_recorded"]
+        assert loaded.display_measurement.item() == 1
+        assert loaded.current_index == 3
+        widget._on_command(
+            widget, {"command": "rewind", "indices": [1], "revision": -1}, []
+        )
+        assert "changed" in widget.state["command_error"]
+        assert loaded.current_index == 3
+        widget._on_command(
+            widget,
+            {"command": "rewind", "indices": [1], "revision": widget.state["revision"]},
+            [],
+        )
+        assert entered.wait(5)
+        assert loaded.current_index == 1
+        assert loaded.running.is_set()
+        assert np.isnan(loaded.result.values[1:]).all()
+        widget._on_command(widget, {"command": "select", "indices": [0]}, [])
+        assert "paused" in widget.state["command_error"]
+        widget._on_command(widget, {"command": []}, [])
+    finally:
+        release.set()
+        loaded.cancel()
+        wait_for(lambda: not loaded._active)
+        widget.close()
+
+
+def test_background_error_keeps_widget_alive_and_recovers_without_prepare(
+    measurement, monkeypatch
+):
+    from xmsr import notebook_integration
+
+    displayed = []
+    monkeypatch.setattr(
+        notebook_integration, "display", lambda *items: displayed.extend(items)
+    )
+    monkeypatch.setattr(notebook_integration, "live_plot", lambda _: lambda: None)
+    measurement.notebook_ui = True
+    preparations = []
+    acquire = measurement.measure
+    prepare = measurement.prepare
+    failed = False
+
+    def prepare_once(metadata):
+        preparations.append(True)
+        prepare(metadata)
+
+    def measure(values, indices, metadata):
+        nonlocal failed
+        if indices["point"] == 1 and not failed:
+            failed = True
+            raise RuntimeError("Recoverable timeout")
+        return acquire(values, indices, metadata)
+
+    measurement.prepare = prepare_once
+    measurement.measure = measure
+    thread = threading.Thread(target=measurement.run, daemon=True)
+    original_handlers = list(measurement.LOG.handlers)
+    thread.start()
+    try:
+        wait_for(lambda: len(displayed) >= 2)
+        widget = displayed[0]
+        send(widget, "start")
+        wait_for(lambda: widget.state.get("can_retry"))
+        assert widget.state["status"] == "failed"
+        assert widget.state["can_navigate"]
+        assert not widget._finished
+        assert measurement._ui_thread.is_alive()
+        widget._on_command(
+            widget,
+            {"command": "rewind", "indices": [0], "revision": widget.state["revision"]},
+            [],
+        )
+        thread.join(5)
+        assert not thread.is_alive()
+        assert len(preparations) == 1
+        assert widget.state["status"] == "finished"
+        assert widget.state["error"] == ""
+        assert widget._finished
+        assert not measurement._ui_thread.is_alive()
+        assert measurement.LOG.handlers == original_handlers
+    finally:
+        measurement.cancel()
+        thread.join(5)
         for item in displayed:
             item.close()
