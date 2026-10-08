@@ -192,7 +192,9 @@ measurement  # Last expression in a notebook cell
 
 Use **Start**, **Pause**, **Resume**, and **Cancel** in the panel. Python owns the
 execution state; the panel displays synchronized snapshots and sends explicit
-commands. Cancellation wakes a worker waiting for start or resume, but cannot
+commands. **Pausing…** means the current step is still finishing; navigation is
+enabled once it reaches a quiescent boundary. Cancellation wakes a worker
+waiting for start or resume, but cannot
 interrupt an instrument call already in progress. The panel retains the latest
 500 log records, provides filename/path clipboard buttons, and adapts to VS Code
 theme colors. Existing plots and the final rich xarray result are displayed
@@ -206,8 +208,83 @@ measurement.run()  # Blocking execution on the main thread
 ```
 
 Progress and timing are calculated in Python without a widget or notebook
-progress bar. Elapsed time includes pauses; the rate is the average for newly
-completed steps in this invocation, including when resuming an existing archive.
+progress bar. Elapsed time includes pauses; timing/rate restart at each retry or
+rewind and count only newly completed steps in that continuation.
+
+### Reopening Saved Runs
+
+Recreate the same measurement with the same filename options and
+`overwrite=False`. The existing filename schema selects the archive:
+
+```python
+measurement = YourMeasurement(
+    filename="my-run",
+    target_directory="data",
+    timestamp=False,
+    with_coords=False,
+    overwrite=False,
+)
+measurement
+```
+
+If `data/my-run.zarr` exists, the runner restores its committed progress,
+metadata, and latest measurement. The panel waits for **Resume saved run**;
+saved data can also be browsed or rewound before starting. A new session runs
+its normal `prepare()` once. Archives with incompatible coordinates, variables,
+shapes, dtypes, or invalid checkpoints are rejected rather than silently treated
+as new runs. Existing archives using `__CURRENT_INDEX__` remain supported.
+
+### Browsing and Rewinding
+
+When paused or recovering from an error, **Browse / resume from here** provides
+one control per sweep dimension: index-based sliders for numeric coordinates,
+and select boxes for categorical coordinates. Exact coordinate values and units
+are shown alongside the controls; derived coordinates are read-only.
+
+Changing a selection displays that point's saved measurement in the step plot.
+It does not acquire data, move instruments, or change the acquisition cursor.
+**Show latest** returns to the latest committed point.
+
+**Resume from selected point** persists a rewind, invalidating the selected point
+and everything after it, then continues acquisition from that point. Earlier
+points stay valid. The runner cannot jump ahead of the next acquisition point.
+Raw old values remain in the Zarr arrays, but `result`, point previews, and live
+plots mask the invalid tail until it is remeasured. Partial integer/boolean
+results are promoted to represent missing values; their on-disk dtypes are
+unchanged. Reopening after a rewind uses the newly saved cursor.
+New archives chunk data per sweep point, so replacing an invalid point does not
+rewrite a chunk containing earlier valid measurements.
+
+The same operations are available programmatically on a quiescent runner:
+
+```python
+measurement.pause()
+measurement.paused.wait()  # Acknowledge the in-flight step
+measurement.select_point((2, 1))  # Inspect sweep indices, without changing progress
+measurement.rewind((2, 1))        # Persist invalidation and stay paused
+measurement.resume()             # Remeasure from those indices
+# Or: measurement.rewind((2, 1), resume=True)
+```
+
+Linear point indices are also accepted. Rewind changes data validity and the
+acquisition cursor, not arbitrary metadata or instrument state; `measure()`
+continues to apply the requested coordinates as usual. Rewinding during a
+`wait_for_manual_resume()` operator pause unwinds that old step before acquiring
+the selected point.
+
+### Error Recovery
+
+Acquisition/storage errors in a background runner keep the session, widget,
+logs, and instrument setup alive. **Retry failed point** retries the uncommitted
+point; browsing and rewinding to earlier parameters are also available.
+**Neither retry nor rewind calls `prepare()` again.** `finish()` runs on final
+completion or cancellation, not on each recoverable error.
+
+Setup/finalization errors are terminal. Blocking main-thread `run()` still raises
+step errors, but its session remains recoverable: call `run()` again, or rewind
+and continue, without repeating `prepare()`. If a notebook panel was displayed,
+its recovery commands launch a worker using that existing setup. Plot failures are
+logged separately after the data/checkpoint commit and do not roll back progress.
 
 ### Frontend Development
 
