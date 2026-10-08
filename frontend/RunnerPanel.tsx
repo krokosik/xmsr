@@ -1,7 +1,11 @@
 import { useState } from "react";
+import { SweepNavigation, type SweepAxis } from "./SweepNavigation";
 
-export type RunnerStatus = "initialized" | "running" | "paused" | "finished" | "cancelled" | "failed";
-export type RunnerCommand = "start" | "pause" | "resume" | "cancel";
+export type RunnerStatus = "initialized" | "running" | "pausing" | "paused" | "finished" | "cancelled" | "failed";
+export type RunnerCommand = "start" | "pause" | "resume" | "cancel" | "retry" | "show_latest";
+export type RunnerAction = RunnerCommand
+  | { command: "select"; indices: number[] }
+  | { command: "rewind"; indices: number[]; revision: number };
 
 export interface RunnerState {
   name: string;
@@ -14,6 +18,15 @@ export interface RunnerState {
   filename: string;
   path: string;
   error: string;
+  can_navigate: boolean;
+  can_retry: boolean;
+  selected_index: number;
+  selected_indices: number[];
+  selection_recorded: boolean;
+  selected_values: Record<string, string>;
+  revision: number;
+  reopened: boolean;
+  command_error: string;
 }
 
 export interface LogRecord {
@@ -26,7 +39,8 @@ export interface LogRecord {
 interface RunnerPanelProps {
   state: RunnerState;
   logs: LogRecord[];
-  onCommand: (command: RunnerCommand) => void;
+  axes?: SweepAxis[];
+  onCommand: (command: RunnerAction) => void;
 }
 
 const actions: Partial<Record<RunnerStatus, { label: string; command: RunnerCommand }>> = {
@@ -40,7 +54,7 @@ function duration(seconds: number): string {
   return `${Math.floor(value / 60)}m ${value % 60}s`;
 }
 
-export function RunnerPanel({ state, logs, onCommand }: RunnerPanelProps) {
+export function RunnerPanel({ state, logs, axes = [], onCommand }: RunnerPanelProps) {
   const [clipboardStatus, setClipboardStatus] = useState("");
   const action = actions[state.status];
   const progress = state.total > 0 ? Math.min(100, Math.max(0, state.completed / state.total * 100)) : 0;
@@ -59,8 +73,12 @@ export function RunnerPanel({ state, logs, onCommand }: RunnerPanelProps) {
       <header>
         <h3>{state.name}</h3>
         <div className="xmsr-actions">
-          {action && <button onClick={() => onCommand(action.command)}>{action.label}</button>}
-          {action && <button onClick={() => onCommand("cancel")}>Cancel</button>}
+          {action && <button onClick={() => onCommand(action.command)}>
+            {state.status === "initialized" && state.reopened ? "Resume saved run" : action.label}
+          </button>}
+          {state.status === "pausing" && <button disabled>Pausing…</button>}
+          {state.can_retry && <button onClick={() => onCommand("retry")}>Retry failed point</button>}
+          {(action || state.status === "pausing" || state.can_retry) && <button onClick={() => onCommand("cancel")}>Cancel</button>}
         </div>
       </header>
       <div className="xmsr-summary">
@@ -68,6 +86,7 @@ export function RunnerPanel({ state, logs, onCommand }: RunnerPanelProps) {
         <span>{state.completed} / {state.total} steps · {progress.toFixed(1)}%</span>
       </div>
       <progress aria-label="Measurement progress" value={state.completed} max={Math.max(1, state.total)} />
+      {state.completed < state.total && <p className="xmsr-muted">Next acquisition: point {state.completed + 1} / {state.total}</p>}
       <div className="xmsr-timing">
         <span>Elapsed: {duration(state.elapsed)}</span>
         <span>Remaining: {state.remaining === null ? "—" : duration(state.remaining)}</span>
@@ -82,6 +101,8 @@ export function RunnerPanel({ state, logs, onCommand }: RunnerPanelProps) {
         </div>
       )}
       {state.error && <p role="alert" className="xmsr-error">{state.error}</p>}
+      {state.command_error && <p role="alert" className="xmsr-error">{state.command_error}</p>}
+      {axes.length > 0 && <SweepNavigation state={state} axes={axes} onCommand={onCommand} />}
       <div className="xmsr-logs" role="log" aria-label="Measurement logs" aria-live="off">
         {logs.length === 0 && <p className="xmsr-empty">No logs yet.</p>}
         {[...logs].reverse().map(record => (

@@ -1,11 +1,14 @@
-import { act, screen } from "@testing-library/react";
+import { act, fireEvent, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { expect, it, vi } from "vitest";
 import widget from "./widget";
 import { initialState } from "./test-state";
 
 it("subscribes to Python state, sends commands, and cleans up the React view", async () => {
-  const values: Record<string, unknown> = { state: initialState, logs: [] };
+  const values: Record<string, unknown> = {
+    state: initialState, logs: [],
+    axes: [{ name: "point", values: Array.from({ length: 10 }, (_, i) => String(i)), units: "", numeric: true }],
+  };
   const listeners = new Map<string, Set<() => void>>();
   const model = {
     get: vi.fn((key: string) => values[key]),
@@ -40,6 +43,20 @@ it("subscribes to Python state, sends commands, and cleans up the React view", a
     });
     expect(screen.getByRole("button", { name: "Pause" })).toBeInTheDocument();
     expect(screen.getByRole("progressbar")).toHaveAttribute("value", "4");
+    act(() => {
+      values.state = { ...initialState, status: "paused", completed: 4, can_navigate: true,
+        selected_indices: [3], selected_index: 3, selection_recorded: true, revision: 4 };
+      for (const callback of listeners.get("change:state") ?? []) callback();
+    });
+    fireEvent.change(screen.getByRole("slider", { name: "point index" }), { target: { value: "1" } });
+    expect(model.send).toHaveBeenLastCalledWith({ command: "select", indices: [1] });
+    act(() => {
+      values.state = { ...initialState, status: "paused", completed: 4, can_navigate: true,
+        selected_indices: [1], selected_index: 1, selection_recorded: true, revision: 4 };
+      for (const callback of listeners.get("change:state") ?? []) callback();
+    });
+    await userEvent.setup().click(screen.getByRole("button", { name: "Resume from selected point" }));
+    expect(model.send).toHaveBeenLastCalledWith({ command: "rewind", indices: [1], revision: 4 });
   } finally {
     await act(async () => {
       controller.abort();

@@ -9085,7 +9085,118 @@ var re = /* @__PURE__ */ o(((e) => {
 	e.jsx = n, e.jsxs = n;
 })), x = (/* @__PURE__ */ o(((e, t) => {
 	t.exports = re();
-})))(), ie = {
+})))();
+function ie({ state: e, axes: t, onCommand: n }) {
+	let r = (0, _.useId)(), [i, a] = (0, _.useState)(e.selected_indices), o = e.selected_indices.join(",");
+	(0, _.useEffect)(() => a(e.selected_indices), [o]);
+	let s = t.reduce((e, t, n) => e * t.values.length + (i[n] ?? 0), 0), c = i.join(",") !== o, l = e.can_navigate && !c && s <= e.completed, u = Object.entries(e.selected_values).filter(([e]) => !t.some((t) => t.name === e));
+	function d(e, t) {
+		let r = [...i];
+		r[e] = t, a(r), n({
+			command: "select",
+			indices: r
+		});
+	}
+	return /* @__PURE__ */ (0, x.jsxs)("details", {
+		className: "xmsr-navigation",
+		open: e.can_navigate,
+		children: [
+			/* @__PURE__ */ (0, x.jsx)("summary", { children: "Browse / resume from here" }),
+			!e.can_navigate && /* @__PURE__ */ (0, x.jsx)("p", {
+				className: "xmsr-muted",
+				children: "Pause acquisition to browse or rewind."
+			}),
+			e.reopened && /* @__PURE__ */ (0, x.jsxs)("p", { children: [
+				"Reopened saved run · ",
+				e.completed,
+				" committed steps"
+			] }),
+			/* @__PURE__ */ (0, x.jsxs)("fieldset", {
+				disabled: !e.can_navigate,
+				children: [/* @__PURE__ */ (0, x.jsx)("legend", { children: "Parameter set" }), t.map((e, t) => /* @__PURE__ */ (0, x.jsxs)("div", {
+					className: "xmsr-coordinate",
+					children: [
+						/* @__PURE__ */ (0, x.jsx)("label", {
+							htmlFor: `${r}-${t}`,
+							children: e.name
+						}),
+						e.numeric ? /* @__PURE__ */ (0, x.jsx)("input", {
+							id: `${r}-${t}`,
+							"aria-label": `${e.name} index`,
+							type: "range",
+							min: 0,
+							max: e.values.length - 1,
+							step: 1,
+							value: i[t] ?? 0,
+							onChange: (e) => d(t, Number(e.target.value))
+						}) : /* @__PURE__ */ (0, x.jsx)("select", {
+							id: `${r}-${t}`,
+							"aria-label": e.name,
+							value: i[t] ?? 0,
+							onChange: (e) => d(t, Number(e.target.value)),
+							children: e.values.map((e, t) => /* @__PURE__ */ (0, x.jsx)("option", {
+								value: t,
+								children: e
+							}, t))
+						}),
+						/* @__PURE__ */ (0, x.jsxs)("output", { children: [
+							e.values[i[t] ?? 0],
+							" ",
+							e.units
+						] }),
+						/* @__PURE__ */ (0, x.jsxs)("span", {
+							className: "xmsr-muted",
+							children: [
+								"index ",
+								i[t] ?? 0,
+								" / ",
+								e.values.length - 1
+							]
+						})
+					]
+				}, e.name))]
+			}),
+			/* @__PURE__ */ (0, x.jsxs)("p", {
+				"aria-live": "polite",
+				children: [
+					"Selected point ",
+					s + 1,
+					" / ",
+					e.total,
+					" · ",
+					c ? "Loading selection…" : e.selection_recorded ? "Recorded data available" : "No valid recorded data"
+				]
+			}),
+			u.length > 0 && /* @__PURE__ */ (0, x.jsx)("dl", {
+				className: "xmsr-derived",
+				children: u.map(([e, t]) => /* @__PURE__ */ (0, x.jsxs)("div", { children: [/* @__PURE__ */ (0, x.jsx)("dt", { children: e }), /* @__PURE__ */ (0, x.jsx)("dd", { children: t })] }, e))
+			}),
+			/* @__PURE__ */ (0, x.jsxs)("div", {
+				className: "xmsr-actions",
+				children: [/* @__PURE__ */ (0, x.jsx)("button", {
+					disabled: !e.can_navigate,
+					onClick: () => n("show_latest"),
+					children: "Show latest"
+				}), /* @__PURE__ */ (0, x.jsx)("button", {
+					disabled: !l,
+					onClick: () => n({
+						command: "rewind",
+						indices: i,
+						revision: e.revision
+					}),
+					children: "Resume from selected point"
+				})]
+			}),
+			/* @__PURE__ */ (0, x.jsx)("p", {
+				className: "xmsr-muted",
+				children: "Resuming here remeasures this point and invalidates everything after it."
+			})
+		]
+	});
+}
+//#endregion
+//#region frontend/RunnerPanel.tsx
+var S = {
 	initialized: {
 		label: "Start",
 		command: "start"
@@ -9099,17 +9210,17 @@ var re = /* @__PURE__ */ o(((e) => {
 		command: "resume"
 	}
 };
-function S(e) {
+function ae(e) {
 	let t = Math.max(0, Math.floor(e));
 	return `${Math.floor(t / 60)}m ${t % 60}s`;
 }
-function ae({ state: e, logs: t, onCommand: n }) {
-	let [r, i] = (0, _.useState)(""), a = ie[e.status], o = e.total > 0 ? Math.min(100, Math.max(0, e.completed / e.total * 100)) : 0;
-	async function s(e) {
+function oe({ state: e, logs: t, axes: n = [], onCommand: r }) {
+	let [i, a] = (0, _.useState)(""), o = S[e.status], s = e.total > 0 ? Math.min(100, Math.max(0, e.completed / e.total * 100)) : 0;
+	async function c(e) {
 		try {
-			await navigator.clipboard.writeText(e), i("Copied");
+			await navigator.clipboard.writeText(e), a("Copied");
 		} catch {
-			i("Could not copy to clipboard");
+			a("Could not copy to clipboard");
 		}
 	}
 	return /* @__PURE__ */ (0, x.jsxs)("section", {
@@ -9118,13 +9229,24 @@ function ae({ state: e, logs: t, onCommand: n }) {
 		children: [
 			/* @__PURE__ */ (0, x.jsxs)("header", { children: [/* @__PURE__ */ (0, x.jsx)("h3", { children: e.name }), /* @__PURE__ */ (0, x.jsxs)("div", {
 				className: "xmsr-actions",
-				children: [a && /* @__PURE__ */ (0, x.jsx)("button", {
-					onClick: () => n(a.command),
-					children: a.label
-				}), a && /* @__PURE__ */ (0, x.jsx)("button", {
-					onClick: () => n("cancel"),
-					children: "Cancel"
-				})]
+				children: [
+					o && /* @__PURE__ */ (0, x.jsx)("button", {
+						onClick: () => r(o.command),
+						children: e.status === "initialized" && e.reopened ? "Resume saved run" : o.label
+					}),
+					e.status === "pausing" && /* @__PURE__ */ (0, x.jsx)("button", {
+						disabled: !0,
+						children: "Pausing…"
+					}),
+					e.can_retry && /* @__PURE__ */ (0, x.jsx)("button", {
+						onClick: () => r("retry"),
+						children: "Retry failed point"
+					}),
+					(o || e.status === "pausing" || e.can_retry) && /* @__PURE__ */ (0, x.jsx)("button", {
+						onClick: () => r("cancel"),
+						children: "Cancel"
+					})
+				]
 			})] }),
 			/* @__PURE__ */ (0, x.jsxs)("div", {
 				className: "xmsr-summary",
@@ -9137,7 +9259,7 @@ function ae({ state: e, logs: t, onCommand: n }) {
 					" / ",
 					e.total,
 					" steps · ",
-					o.toFixed(1),
+					s.toFixed(1),
 					"%"
 				] })]
 			}),
@@ -9146,11 +9268,20 @@ function ae({ state: e, logs: t, onCommand: n }) {
 				value: e.completed,
 				max: Math.max(1, e.total)
 			}),
+			e.completed < e.total && /* @__PURE__ */ (0, x.jsxs)("p", {
+				className: "xmsr-muted",
+				children: [
+					"Next acquisition: point ",
+					e.completed + 1,
+					" / ",
+					e.total
+				]
+			}),
 			/* @__PURE__ */ (0, x.jsxs)("div", {
 				className: "xmsr-timing",
 				children: [
-					/* @__PURE__ */ (0, x.jsxs)("span", { children: ["Elapsed: ", S(e.elapsed)] }),
-					/* @__PURE__ */ (0, x.jsxs)("span", { children: ["Remaining: ", e.remaining === null ? "—" : S(e.remaining)] }),
+					/* @__PURE__ */ (0, x.jsxs)("span", { children: ["Elapsed: ", ae(e.elapsed)] }),
+					/* @__PURE__ */ (0, x.jsxs)("span", { children: ["Remaining: ", e.remaining === null ? "—" : ae(e.remaining)] }),
 					/* @__PURE__ */ (0, x.jsxs)("span", { children: [e.rate.toFixed(2), " steps/s"] })
 				]
 			}),
@@ -9162,16 +9293,16 @@ function ae({ state: e, logs: t, onCommand: n }) {
 						children: e.filename
 					}),
 					/* @__PURE__ */ (0, x.jsx)("button", {
-						onClick: () => s(e.filename),
+						onClick: () => c(e.filename),
 						children: "Copy filename"
 					}),
 					/* @__PURE__ */ (0, x.jsx)("button", {
-						onClick: () => s(e.path),
+						onClick: () => c(e.path),
 						children: "Copy path"
 					}),
 					/* @__PURE__ */ (0, x.jsx)("span", {
 						"aria-live": "polite",
-						children: r
+						children: i
 					})
 				]
 			}),
@@ -9179,6 +9310,16 @@ function ae({ state: e, logs: t, onCommand: n }) {
 				role: "alert",
 				className: "xmsr-error",
 				children: e.error
+			}),
+			e.command_error && /* @__PURE__ */ (0, x.jsx)("p", {
+				role: "alert",
+				className: "xmsr-error",
+				children: e.command_error
+			}),
+			n.length > 0 && /* @__PURE__ */ (0, x.jsx)(ie, {
+				state: e,
+				axes: n,
+				onCommand: r
 			}),
 			/* @__PURE__ */ (0, x.jsxs)("div", {
 				className: "xmsr-logs",
@@ -9207,14 +9348,15 @@ function ae({ state: e, logs: t, onCommand: n }) {
 }
 //#endregion
 //#region frontend/widget.tsx
-function oe() {
-	let [e] = te("state"), [t] = te("logs"), n = ee();
-	return /* @__PURE__ */ (0, x.jsx)(ae, {
+function se() {
+	let [e] = te("state"), [t] = te("logs"), [n] = te("axes"), r = ee();
+	return /* @__PURE__ */ (0, x.jsx)(oe, {
 		state: e,
 		logs: t,
-		onCommand: (e) => n.send({ command: e })
+		axes: n,
+		onCommand: (e) => r.send(typeof e == "string" ? { command: e } : e)
 	});
 }
-var se = { render: ne(oe) };
+var ce = { render: ne(se) };
 //#endregion
-export { se as default };
+export { ce as default };

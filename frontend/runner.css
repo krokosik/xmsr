@@ -35,6 +35,7 @@
   font: inherit;
 }
 .xmsr-runner button:hover { background: var(--vscode-button-hoverBackground, #005a9e); }
+.xmsr-runner button:disabled { opacity: 0.5; cursor: default; }
 .xmsr-runner button:focus-visible { outline: 2px solid var(--vscode-focusBorder, #007acc); outline-offset: 2px; }
 .xmsr-runner progress { display: block; width: 100%; height: 12px; margin: 8px 0; accent-color: var(--xmsr-accent); }
 .xmsr-timing { color: var(--xmsr-muted); margin-bottom: 8px; }
@@ -42,9 +43,20 @@
 .xmsr-status { font-weight: 600; }
 .xmsr-status-running, .xmsr-log-info { color: var(--vscode-charts-blue, #007acc); }
 .xmsr-status-finished { color: var(--vscode-charts-green, #16825d); }
-.xmsr-status-paused, .xmsr-status-cancelled, .xmsr-log-warning { color: var(--vscode-editorWarning-foreground, #9a6700); }
+.xmsr-status-pausing, .xmsr-status-paused, .xmsr-status-cancelled, .xmsr-log-warning { color: var(--vscode-editorWarning-foreground, #9a6700); }
 .xmsr-status-failed, .xmsr-error, .xmsr-log-error, .xmsr-log-critical { color: var(--vscode-editorError-foreground, #d32f2f); }
 .xmsr-log-debug, .xmsr-empty { color: var(--xmsr-muted); }
 .xmsr-logs { max-height: 180px; min-height: 60px; overflow-y: auto; border-top: 1px solid var(--xmsr-border); margin-top: 10px; padding-top: 8px; }
 .xmsr-log { white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--vscode-editor-font-family, monospace); margin-bottom: 4px; }
 .xmsr-log span { font-size: 0.9em; }
+.xmsr-muted { color: var(--xmsr-muted); }
+.xmsr-navigation { border-top: 1px solid var(--xmsr-border); margin-top: 10px; padding-top: 8px; }
+.xmsr-navigation summary { cursor: pointer; font-weight: 600; }
+.xmsr-navigation fieldset { border: 1px solid var(--xmsr-border); margin: 10px 0; padding: 8px; }
+.xmsr-coordinate { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 6px 0; }
+.xmsr-coordinate label { min-width: 80px; }
+.xmsr-coordinate input[type="range"] { flex: 1; min-width: 120px; accent-color: var(--xmsr-accent); }
+.xmsr-coordinate select { color: var(--vscode-input-foreground, var(--xmsr-fg)); background: var(--vscode-input-background, transparent); border: 1px solid var(--xmsr-border); font: inherit; }
+.xmsr-derived { display: flex; gap: 16px; flex-wrap: wrap; }
+.xmsr-derived div { display: flex; gap: 8px; }
+.xmsr-derived dd { margin: 0; }
