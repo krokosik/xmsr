@@ -80,3 +80,5 @@ class SingleVariableMeasurement(Measurement):
 
 measurement = SingleVariableMeasurement()
 measurement
+
+# %%

@@ -79,3 +79,5 @@ class MultiVariableMeasurement(Measurement):
 
 measurement = MultiVariableMeasurement()
 measurement
+
+# %%

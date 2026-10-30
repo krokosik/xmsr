@@ -11,6 +11,7 @@ from pathlib import Path
 import numpy as np
 import xarray as xr
 from xarray import DataArray, Dataset
+from time import sleep
 
 from xmsr import Measurement
 
@@ -37,6 +38,7 @@ class LivePlotMeasurement(Measurement):
     def measure(self, values, indices, metadata):
         center = 5500 + 600 * values["gate"]
         width = 400 + 30 * indices["bias"]
+        sleep(0.1)
         return (
             np.exp(-((self.coords.frequency - center) ** 2) / (2 * width**2))
             + 0.1 * values["bias"]

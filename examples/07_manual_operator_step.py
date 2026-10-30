@@ -43,3 +43,5 @@ class ManualStepMeasurement(Measurement):
 
 measurement = ManualStepMeasurement()
 measurement
+
+# %%
