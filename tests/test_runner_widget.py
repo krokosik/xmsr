@@ -341,3 +341,83 @@ def test_background_error_keeps_widget_alive_and_recovers_without_prepare(
         thread.join(5)
         for item in displayed:
             item.close()
+
+
+def test_measure_prints_reach_widget_and_flush_on_error(measurement):
+    widget = RunnerWidget(measurement)
+    measurement._runner_widget = widget
+    original_stdout, original_stderr = sys.stdout, sys.stderr
+
+    def measure(*args):
+        print("voltage:", 1.25)
+        print("instrument warning", file=sys.stderr)
+        print("partial", end="")
+        raise RuntimeError("instrument failed")
+
+    measurement.measure = measure
+    try:
+        with pytest.raises(RuntimeError, match="instrument failed"):
+            measurement.step()
+        widget.publish()
+        assert [(r["message"], r["level"]) for r in widget.logs] == [
+            ("voltage: 1.25", "info"),
+            ("instrument warning", "error"),
+            ("partial", "info"),
+        ]
+        assert sys.stdout is original_stdout
+        assert sys.stderr is original_stderr
+    finally:
+        widget.close()
+
+
+def test_output_capture_isolates_threads_and_overlapping_contexts(monkeypatch):
+    from xmsr._output_capture import capture_output
+
+    console = StringIO()
+    monkeypatch.setattr(sys, "stdout", console)
+    entered = threading.Barrier(3)
+    release = threading.Event()
+    messages = [[], []]
+    errors = []
+
+    def worker(index):
+        try:
+            with capture_output(messages[index].append, messages[index].append):
+                entered.wait(5)
+                assert release.wait(5)
+                print(f"worker {index}")
+                with capture_output(messages[index].append, messages[index].append):
+                    print("nested", end="")
+                print("restored", flush=True)
+        except BaseException as error:
+            errors.append(error)
+
+    workers = [threading.Thread(target=worker, args=(i,)) for i in range(2)]
+    for worker_thread in workers:
+        worker_thread.start()
+    try:
+        entered.wait(5)
+        print("unrelated notebook output")
+    finally:
+        release.set()
+        for worker_thread in workers:
+            worker_thread.join(5)
+    assert not errors
+    assert all(not worker_thread.is_alive() for worker_thread in workers)
+    assert console.getvalue() == "unrelated notebook output\n"
+    assert messages == [
+        ["worker 0", "nested", "restored"],
+        ["worker 1", "nested", "restored"],
+    ]
+    assert sys.stdout is console
+
+
+def test_headless_measure_prints_stay_on_console(measurement, capsys):
+    def measure(*args):
+        print("headless measurement")
+        return 0.0
+
+    measurement.measure = measure
+    measurement._last_measurement_shapes = None
+    measurement.step()
+    assert capsys.readouterr().out == "headless measurement\n"

@@ -197,7 +197,13 @@ enabled once it reaches a quiescent boundary. Cancellation wakes a worker
 waiting for start or resume, but cannot
 interrupt an instrument call already in progress. The panel retains the latest
 500 log records, provides filename/path clipboard buttons, and adapts to VS Code
-theme colors. Existing plots and the final rich xarray result are displayed
+theme colors. Python `print()` calls made inside `measure()` (including instrument
+library calls on the same thread) appear in the panel's log box. Standard output
+uses info level; standard error uses error level. Lines appear on newline or
+`flush=True`, and trailing partial lines are flushed when `measure()` exits.
+Output from unrelated threads, subprocesses, native code writing directly to file
+descriptors, and explicit file destinations such as `print(..., file=my_file)` is not captured.
+Headless measurements keep their normal console output. Existing plots and the final rich xarray result are displayed
 alongside the panel.
 
 For scripts and headless tests, disable notebook UI explicitly:

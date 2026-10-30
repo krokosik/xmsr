@@ -369,7 +369,10 @@ class Measurement(Thread):
             f"Measurement no. {idx} indices: {indices_tuple} values: {tuple(values.values())}"
         )
 
-        result = self.measure(values, indices, self.metadata)
+        from .runner_widget import capture_measurement_output
+
+        with capture_measurement_output(getattr(self, "_runner_widget", None)):
+            result = self.measure(values, indices, self.metadata)
         wrapped = self._coerce_measurement_output(result)
 
         current_shapes = tuple(arr.shape for arr in wrapped.data_vars.values())
@@ -1137,6 +1140,7 @@ class Measurement(Thread):
         self._refresh_plots()
 
         self.LOG.debug("Using notebook live info integration")
+        self._runner_widget = live_info_elements.widget
         self._ui_update = live_info_elements.ui_update
         self._ui_ctx = logging_redirect_widget(live_info_elements.widget, self.LOG)
         self._ui_ctx.__enter__()

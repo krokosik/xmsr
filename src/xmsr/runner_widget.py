@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, Iterator
 import anywidget
 import traitlets
 
+from ._output_capture import capture_output
 from .shared import MeasurementStatus
 
 if TYPE_CHECKING:
@@ -240,3 +241,22 @@ def logging_redirect_widget(
             logger.addHandler(console_handler)
         for console_handler in ancestor_consoles:
             console_handler.removeFilter(console_filter)
+
+
+@contextmanager
+def capture_measurement_output(widget: RunnerWidget | None) -> Iterator[None]:
+    """Send the measurement thread's stdout/stderr to the notebook log box."""
+    if widget is None:
+        yield
+        return
+
+    def emit(message: str, level: int) -> None:
+        widget.append_log(
+            logging.LogRecord("measurement.output", level, "", 0, message, (), None)
+        )
+
+    with capture_output(
+        lambda message: emit(message, logging.INFO),
+        lambda message: emit(message, logging.ERROR),
+    ):
+        yield
