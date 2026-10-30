@@ -18,15 +18,13 @@ from xmsr import Measurement
 
 class MetadataLifecycleMeasurement(Measurement):
     target_directory = str(Path("tmp/custom-target"))
-    filename = "manual-filepath"
     timestamp = False
     with_coords = False
     overwrite = False
 
     # Some metadata may not make sense to be embedded in the data. For these use the
     # metadata dictionary, which will be available in the `attr` property of your measurement
-    # result. You can set measurement wide initial values:
-    metadata = {"operator": "demo", "setup": "lab-bench-1"}
+    # result. Pass initial metadata to the constructor below.
 
     sweep_template = xr.Dataset().assign_coords(step=np.arange(6))
 
@@ -38,7 +36,7 @@ class MetadataLifecycleMeasurement(Measurement):
     )
 
     # You can update or add to the metadata in the `prepare`, `measure`, and `finish` methods.
-    # These are called once per measurement, before and after the sweep loop executes.
+    # prepare and finish run once per session; measure runs once per sweep point.
     def prepare(self, metadata):
         metadata["prepared"] = True
         metadata["measure_calls"] = 0
@@ -60,7 +58,9 @@ class MetadataLifecycleMeasurement(Measurement):
         metadata["finished"] = True
 
 
-measurement = MetadataLifecycleMeasurement()
+measurement = MetadataLifecycleMeasurement(
+    filename="manual-filepath", metadata={"operator": "demo", "setup": "lab-bench-1"}
+)
 measurement
 # %%
 print("Stored in:", measurement._path)

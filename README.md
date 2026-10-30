@@ -72,12 +72,12 @@ class BasicMeasurement(Measurement):
     )
 
     def measure(self, values, indices, metadata):
-        # values: {'gate': ..., 'bias': ...}
-        # indices: {'gate': ..., 'bias': ...}
+        # values includes gate, bias, and the derived power coordinate.
+        # indices includes gate, bias, and power (which shares gate's index).
         return np.random.randn(256).astype(np.float32)
 
 
-measurement = BasicMeasurement()
+measurement = BasicMeasurement(notebook_ui=False)
 measurement.run()
 result = measurement.result
 ```
@@ -138,15 +138,25 @@ class MultiMeasurement(Measurement):
 
 ## Configuration
 
-Runtime behavior can be configured via class attributes or constructor args:
+The following defaults can be set as class attributes or constructor arguments:
 
-- `metadata`
 - `target_directory`
-- `filename`
 - `timestamp` (default: `True`)
 - `with_coords` (default: `True`)
 - `overwrite` (default: `False`)
 - `zarr_format` (default: `3`, accepts `2` or `3`)
+
+Pass `filename`, `metadata`, and `notebook_ui` to the constructor. `filename`
+defaults to the class name, `metadata` to an empty dictionary, and `notebook_ui`
+to `True`. For example:
+
+```python
+measurement = BasicMeasurement(
+    filename="gate-sweep",
+    metadata={"operator": "demo"},
+    notebook_ui=False,
+)
+```
 
 ### Zarr v3 Migration Notes
 
@@ -170,11 +180,9 @@ npm run typecheck
 ## Non-Blocking Execution
 
 ```python
-measurement = BasicMeasurement()
+measurement = BasicMeasurement(notebook_ui=False)
 measurement.start()
-
-measurement.pause()
-measurement.resume()  # Also starts acquisition if awaiting Start
+measurement.resume()  # Release the background worker waiting for Start
 
 measurement.finished.wait()
 result = measurement.result
@@ -202,9 +210,9 @@ library calls on the same thread) appear in the panel's log box. Standard output
 uses info level; standard error uses error level. Lines appear on newline or
 `flush=True`, and trailing partial lines are flushed when `measure()` exits.
 Output from unrelated threads, subprocesses, native code writing directly to file
-descriptors, and explicit file destinations such as `print(..., file=my_file)` is not captured.
-Headless measurements keep their normal console output. Existing plots and the final rich xarray result are displayed
-alongside the panel.
+descriptors, and explicit file destinations such as `print(..., file=my_file)`
+is not captured. Headless measurements keep their normal console output.
+Existing plots and the final rich xarray result are displayed alongside the panel.
 
 For scripts and headless tests, disable notebook UI explicitly:
 
@@ -223,7 +231,7 @@ Recreate the same measurement with the same filename options and
 `overwrite=False`. The existing filename schema selects the archive:
 
 ```python
-measurement = YourMeasurement(
+measurement = BasicMeasurement(
     filename="my-run",
     target_directory="data",
     timestamp=False,

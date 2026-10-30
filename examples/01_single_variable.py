@@ -19,7 +19,6 @@ class SingleVariableMeasurement(Measurement):
     target_directory = str(
         Path("tmp/examples")
     )  # all measurement files go into this directory
-    filename = "single-variable"  # base filename for results
     timestamp = False  # append timestamp to filename?
     with_coords = False  # include coordinates in filename?
     overwrite = True  # overwrite or append to existing file?
@@ -78,7 +77,7 @@ class SingleVariableMeasurement(Measurement):
         ).astype(np.float32)
 
 
-measurement = SingleVariableMeasurement()
+measurement = SingleVariableMeasurement(filename="single-variable")
 measurement
 
 # %%

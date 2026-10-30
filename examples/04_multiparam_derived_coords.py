@@ -7,7 +7,6 @@ Shows multiparam behavior via scalar base coordinate plus derived coordinates.
 
 # %%
 from pathlib import Path
-from typing import cast
 
 import numpy as np
 import xarray as xr
@@ -17,7 +16,6 @@ from xmsr import Measurement
 
 class DerivedCoordsSweepMeasurement(Measurement):
     target_directory = str(Path("tmp/examples"))
-    filename = "multiparam-derived"
     timestamp = False
     with_coords = False
     overwrite = True
@@ -43,7 +41,7 @@ class DerivedCoordsSweepMeasurement(Measurement):
         return values["gain"] * np.exp(-sample / 40.0) + values["offset"]
 
 
-measurement = DerivedCoordsSweepMeasurement()
+measurement = DerivedCoordsSweepMeasurement(filename="multiparam-derived")
 measurement
 
 # %%

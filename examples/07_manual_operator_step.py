@@ -16,7 +16,6 @@ from xmsr import Measurement
 
 class ManualStepMeasurement(Measurement):
     target_directory = str(Path("tmp/examples"))
-    filename = "manual-step"
     timestamp = False
     with_coords = False
     overwrite = True
@@ -41,7 +40,7 @@ class ManualStepMeasurement(Measurement):
         return np.sin(np.linspace(0, 8, 80) + stage)
 
 
-measurement = ManualStepMeasurement()
+measurement = ManualStepMeasurement(filename="manual-step")
 measurement
 
 # %%

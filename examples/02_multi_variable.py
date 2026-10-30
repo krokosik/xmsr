@@ -17,7 +17,6 @@ from xmsr import Measurement
 
 class MultiVariableMeasurement(Measurement):
     target_directory = str(Path("tmp/examples"))
-    filename = "multi-variable"
     timestamp = False
     with_coords = False
     overwrite = True
@@ -77,7 +76,7 @@ class MultiVariableMeasurement(Measurement):
         return voltage, current, resistance
 
 
-measurement = MultiVariableMeasurement()
+measurement = MultiVariableMeasurement(filename="multi-variable")
 measurement
 
 # %%

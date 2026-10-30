@@ -18,7 +18,6 @@ from xmsr import Measurement
 
 class LivePlotMeasurement(Measurement):
     target_directory = str(Path("tmp/examples"))
-    filename = "live-plot"
     timestamp = False
     with_coords = False
     overwrite = True
@@ -53,7 +52,7 @@ class LivePlotMeasurement(Measurement):
         return data.hvplot.line(ylim=(-0.2, 1.2))
 
 
-measurement = LivePlotMeasurement()
+measurement = LivePlotMeasurement(filename="live-plot")
 measurement
 
 # %%
