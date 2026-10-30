@@ -1,5 +1,5 @@
-.cell-output-ipywidget-background {
-  /* VS Code gives widget outputs a white background independently of the view. */
+.cell-output-ipywidget-background:has(.xmsr-runner) {
+  /* Override VS Code's background only for the runner, preserving rich results. */
   background-color: transparent !important;
 }
 
